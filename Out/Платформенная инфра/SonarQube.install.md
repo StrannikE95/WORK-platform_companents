@@ -1,40 +1,50 @@
 # SonarQube Server 2026.1.5 LTA — установка и конфигурирование
 
-Связанный документ (глоссарий, редакции, DCE, почему так): `SonarQube.md`.
+Связанный документ (зачем система, из каких программ состоит, порты, железо): `SonarQube.md`.
 
-Этот файл — **как поставить и настроить**. Не копируйте Dev-значения в прод. Stretch application/search-нод на несколько ЦОДов **не делаем**: порты 9001–9003 и JDBC требуют низкой задержки; вендор для search пишет *same region*, миллисекунд нет.
+Этот файл — **как поставить и настроить**. Настройки с учебной машины в бой не копируйте.
 
-Версии: **SonarQube Server 2026.1.5** (LTA). Latest на ту же дату — **2026.4.1**; официальный Helm `sonarsource/sonarqube` / `sonarqube-dce` **2026.4.1 ставит Latest**, не LTA — образ/values **пинить на 2026.1.5**. Community Build — **другая линейка** (на загрузках 26.8.x), не «бесплатный DCE».  
+## Что вы ставите
+
+SonarQube — сервер отчётов статического анализа: сканер в CI смотрит код и отправляет отчёт, сервер превращает его в замечания и порог «можно сливать / нельзя». Ставите **свою** копию, не облако поставщика.
+
+Версия в этой инструкции: **SonarQube Server 2026.1.5** (линейка с длительной поддержкой, LTA). Latest на ту же дату — **2026.4.1**; официальный Helm `sonarsource/sonarqube` / `sonarqube-dce` **2026.4.1 ставит Latest**, не LTA — образ и values **пинить на 2026.1.5**. Community Build — **другая линейка** (на загрузках 26.8.x), не «бесплатный DCE».
+
 Документация LTA: https://docs.sonarsource.com/sonarqube-server/2026.1/
 
-HA самого приложения даёт только **Data Center Edition**. Без ключа DCE — один процесс + HA Postgres + холодный DR, это не кластер SQ.
+Отказоустойчивость **самого приложения** даёт только **Data Center Edition**. Без ключа DCE — один процесс + устойчивая PostgreSQL + холодный запас, это не кластер SonarQube.
+
+Обычный путь боя — Helm `sonarqube-dce` на Kubernetes. Учебный путь — Docker Community или чарт `sonarqube` (не DCE). Windows как хост боя в схеме с Kubernetes не предполагается.
+
+Один кластер application/search, размазанный на несколько дата-центров, здесь **не собираем**. Порты поиска 9001–9003 и JDBC требуют низкой задержки; поставщик для search пишет *same region*, миллисекунд в документации нет. Поэтому живой DCE — внутри одной площадки. Вторая площадка — холодный кластер и переиндексация поиска, не вторая половина того же Elasticsearch.
 
 ---
 
-## Допущения этой инструкции
+## О чём эта инструкция молча договорилась
 
-1. **Stretch запрещён.** Все application nodes, все search nodes и writer PostgreSQL **одного** инстанса — **внутри одного ЦОДа**. Между ЦОДами — **Active-Cold Standby** (официальный DR): второй кластер холодный, БД реплицируется, трафик переключают вручную, затем **forced ES reindex**. Read-only replica БД для живого SQ вендор **не поддерживает**.
-2. Прод — Kubernetes в каждом ЦОДе отдельно (`Kubernetes.install.md`). Инсталлятор DCE — Helm `sonarqube-dce` с тегом образа **2026.1.5**.
-3. Dev — изолированная сеть; Community Build или Developer на одном поде допустимы.
-4. Нагрузки и LOC нет — нет цифры «N app nodes». Есть очередь CE и рычаги (workers EE+, ноды DCE).
-5. Лицензия **на инстанс / LOC**. Второй живой инстанс в ЦОД-2 = вторая лицензия, если его включили. Cold DR — сверять с договором.
-6. Для 2 ЦОДов: живой SQ в ЦОД-1, cold в ЦОД-2. Для 3 ЦОДов: то же + ЦОД-3 только бэкапы или второй cold. Третий ЦОД **не** добавляет третий writer и не кладёт search в чужой ЦОД.
-7. PostgreSQL 14–18 UTF-8, отдельный кластер (с 2026.1 Helm **не** кладёт Postgres в чарт). H2 в проде запрещена вендором.
+1. Все application-ноды, все search-ноды и writer PostgreSQL **одного** инстанса живут в **одном** дата-центре. Между площадками — официальная схема Active-Cold: второй кластер холодный, база реплицируется, трафик переключают вручную, затем **принудительная переиндексация** поиска. Read-only реплика базы для живого SonarQube поставщик **не поддерживает**.
+2. Бой — Kubernetes в каждом дата-центре отдельно (см. `Kubernetes.install.md`). Инсталлятор DCE — Helm `sonarqube-dce` с тегом образа **2026.1.5**.
+3. Учебный стенд — закрытая сеть. Community Build или Developer на одном поде допустимы **только там**.
+4. Цифр вашей нагрузки и LOC нет — нет фразы «хватит N application-нод». Есть очередь разбора отчётов и рычаги (workers Enterprise+, ноды DCE).
+5. Лицензия **на инстанс / LOC**. Второй живой инстанс во втором дата-центре = вторая лицензия, если его включили. Холодный запас — сверять с договором.
+6. Два дата-центра: живой SonarQube в первом, холодный во втором. Три дата-центра: то же + третья площадка только бэкапы или второй холодный. Третий дата-центр **не** добавляет третий writer и не кладёт search в чужую площадку.
+7. PostgreSQL 14–18 UTF-8, отдельный кластер (с 2026.1 Helm **не** кладёт Postgres в чарт). H2 в бою запрещена поставщиком.
+8. Сканер живёт в CI. Падение SonarQube не должно ронять Kafka; политика CI (ждать / падать / обход порога) — ваша, её нет в продукте.
 
 ---
 
-## Dev: 1 ЦОД, без нагрузки
+## Учебный стенд: одна площадка, без нагрузки
 
-**Цель:** проект, отчёт сканера, Quality Gate. **Не** цель: отказ ЦОДа и пачка параллельных PR.
+**Зачем:** открыть проект, увидеть отчёт сканера, понять Quality Gate. **Не зачем:** доказывать отказ дата-центра и пачку параллельных PR.
 
-### Предпосылки
+### Что должно быть до установки
 
 - Docker Engine **или** однонодовый Kubernetes.
-- Порт 9000 свободен на localhost.
-- Linux: `vm.max_map_count ≥ 524288` (дока 2026.1; не путать со старым 262144).
+- На localhost свободен порт 9000.
+- Linux: `vm.max_map_count ≥ 524288` (документация 2026.1; не путать со старым 262144).
 - Сеть стенда не торчит в интернет.
 
-### Установка (Docker — основной путь Dev)
+### Установка (Docker — основной путь для учёбы)
 
 Community Build — чтобы увидеть UI без ключа DCE. На странице загрузок соседнего файла: Community **26.8.0.126808** (это **не** Server 2026.1.5 и не DCE). Тег образа берите со страницы загрузок / Docker Hub линейки `sonarqube` **той** сборки, не `latest` и **не** DCE-образ без лицензии.
 
@@ -47,145 +57,167 @@ docker run -d --name sq-dev \
 
 `sonarqube:community` без пина патча — только если сразу посмотрите digest и зафиксируете его; лучше тег с номером 26.8.x со страницы загрузок. Для препрода, который должен совпасть с боем, — образ **Server 2026.1.5** (Developer, если ключ уже есть), не Community «потому что на тесте хватало».
 
-Привязка к `127.0.0.1` обязательна. UI: `http://127.0.0.1:9000`, вход `admin`/`admin`, сразу сменить пароль.
+Привязка к `127.0.0.1` обязательна: порт слушает только эта машина. UI: `http://127.0.0.1:9000`, вход `admin`/`admin`, сразу сменить пароль.
 
-Для стенда дольше недели — **сразу внешний PostgreSQL**, не H2 (H2 не умеет нормальный бэкап/HA — формулировка вендора «not recommended in production»). JDBC: `jdbcOverwrite` / `SONAR_JDBC_*` на стендовый Postgres.
+Для стенда дольше недели — **сразу внешний PostgreSQL**, не H2 (H2 не умеет нормальный бэкап/HA — формулировка поставщика «not recommended in production»). JDBC: `jdbcOverwrite` / `SONAR_JDBC_*` на стендовый Postgres.
 
-Проверка: Administration → System / about: линейка **не** Latest 2026.4, если цель — как в проде LTA. Сканер в CI (`sonar.token`), не пароль в Git. Background Tasks = SUCCESS.
+Проверка: Administration → System / about: линейка **не** Latest 2026.4, если цель — как в бою LTA. Сканер в CI (`sonar.token`), не пароль в Git. Background Tasks = SUCCESS.
 
-### Установка (Kubernetes Dev)
+### Установка (Kubernetes — если стенд уже в кластере)
 
-Чарт **`sonarqube`** (не `sonarqube-dce`): `community.enabled=true` **или** Developer + ключ; `jdbcOverwrite.*` на свой Postgres; `ingress-nginx` чарта не тащить в привычку прода. `initSysctl: true` на тесте часто оставляют; в прод sysctl делает администратор нод.
+Чарт **`sonarqube`** (не `sonarqube-dce`): Community **или** Developer + ключ; JDBC на свой Postgres; nginx из чарта не тащить в привычку боя. `initSysctl: true` на тесте часто оставляют; в бою sysctl делает администратор нод.
 
-Режим «3 search DCE на ноутбуке» **не нужен**. DCE без ключа как кластер не взлетит.
+Режим «три search DCE на ноутбуке» **не нужен**. DCE без ключа как кластер не взлетит.
 
-### Конфигурирование Dev
+### Какие настройки на тесте упрощаем
 
-| Параметр | Значение | Зачем |
+| Параметр | На тесте | Зачем так |
 |---|---|---|
-| Кластер DCE | нет | Нет требования пережить узел |
-| БД | Postgres, если стенд не однодневный | H2 врёт про прод |
+| Кластер DCE | нет | Не учимся переживать падение машины |
+| База | Postgres, если стенд не однодневный | H2 врёт про бой |
 | Force authentication | вкл | Дефолт; выключение открывает куски API |
-| IdP | можно локальных | Сначала контур сканера |
+| Единый вход | можно локальных | Сначала контур сканера |
 | HPA / CE workers | дефолт | Нет нагрузки |
 | Пароль Helm `AdminAdmin_12$` | **не** использовать | Публичный values |
 
-Чего **не** упрощать: сканер живёт в **CI**; Force authentication, если стенд маршрутизируется; не путать Community с Server LTA.
+Чего **не** упрощаем: сканер живёт в **CI**; Force authentication, если стенд маршрутизируется; не путать Community с Server LTA.
 
-### Проверка Dev
+### Как понять, что стенд живой
 
 1. Логин, смена `admin`/`admin`.
 2. Один репозиторий: задача SUCCESS, issues видны.
-3. Понимание: зелёный gate на игрушке **не** доказывает очередь CE и DCE.
+3. Понимание: зелёный порог на игрушке **не** доказывает очередь разбора и DCE. Снесли контейнер без тома — отчёты пропали. Так и должно быть на тесте, если была H2.
 
-### Сильные / слабые стороны Dev
+### Что хорошо и что плохо в такой схеме
 
-| Сильное | Слабое |
+| Хорошо | Плохо |
 |---|---|
-| Часы, Try-out / Helm non-DCE | Нет HA приложения, нет LB на два app |
-| Дешёво показывает шум правил на вашем коде | Community без PR-анализа легко уехать в прод «потому что хватало» |
+| Часы, официальный Try-out / Helm non-DCE | Нет HA приложения, нет балансировщика на два application |
+| Дешёво показывает шум правил на вашем коде | Community без анализа PR легко уехать в бой «потому что хватало» |
 | | Дефолтные пароли приучают открыть :9000 |
+
+Перед боем полезен **препрод**: DCE 2 application + 3 search **в одном** дата-центре, свои секреты, HTTPS, один проект из CI — даже без боевой очереди PR.
 
 ---
 
-## Prod: 2 или 3 ЦОДа, без stretch, нагрузка возможна
+## Бой: один живой дата-центр, второй — холодный запас
 
-**Цель:** пережить отказ **одного app или одного search внутри ЦОДа** (DCE 2+3: вендор — *one application node and one search node can be lost*). Отказ **целого ЦОДа** = SQ лежит, пока cold promote + **reindex ES**. Падение SQ **не должно** ронять Kafka; политика CI (ждать / падать / обход gate) — ваша, её нет в продукте.
+**Зачем:** пережить отказ **одного application или одного search внутри площадки** (DCE 2+3: поставщик — *one application node and one search node can be lost*). Отказ **всего дата-центра** = SonarQube лежит, пока не переключите трафик на холодный кластер и не перестроите индекс поиска. Падение сервера **не должно** ронять Kafka.
 
-### Почему не stretch
+### Почему кластер не растягиваем на несколько дата-центров
 
-Search — Elasticsearch: кворум из 3 нод переживает **одну** зону, не две. Hazelcast 9003 и ES 9002 чувствительны к RTT. JDBC — low latency до writer. Stretch «по одному search на ЦОД» без замера — лотерея cluster state. Официальный DR — **два кластера**, не один ES на три площадки.
+Search — Elasticsearch: кворум из трёх нод переживает **одну** зону, не две. Hazelcast (порт 9003) и Elasticsearch (порт 9002) чувствительны к задержке. JDBC — низкая задержка до writer. Stretch «по одному search на дата-центр» без замера — лотерея состояния кластера. Официальное восстановление — **два кластера**, не один Elasticsearch на три площадки.
 
-### Топология
+### Как расставить машины
 
-**Внутри активного ЦОДа (ЦОД-1)** — один DCE:
+**В активном дата-центре** — один DCE:
 
-- `searchNodes.replicaCount: 3`, `applicationNodes.replicaCount: ≥ 2`, все в **этом** ЦОДе, anti-affinity по ноде (не по чужому ЦОДу);
-- SSD PVC на search, **не NFS**; не дефолт **5G** как план ёмкости;
-- `vm.max_map_count=524288` на нодах **без** privileged `initSysctl` в проде;
-- ES authentication + TLS (`searchAuthentication`, `nodeEncryption`);
-- свой Ingress/Gateway + health check, **без sticky** (JWT); не `ingress-nginx` из чарта (testing only);
-- PostgreSQL writer HA **в ЦОД-1**; приложение **не** ходит в read-only replica;
-- образ **2026.1.5**, не 2026.4.1 из дефолта Helm.
+- `searchNodes.replicaCount: 3`, `applicationNodes.replicaCount: ≥ 2`, все в **этом** дата-центре, anti-affinity по ноде (не по чужой площадке). Все search-ноды идентичны по CPU/RAM/диску.
+- SSD PVC на search, **не NFS**; не дефолт **5 ГиБ** как план ёмкости; **10%+** свободно всегда.
+- `vm.max_map_count=524288` на нодах **без** privileged `initSysctl` в бою.
+- Аутентификация и TLS Elasticsearch (`searchAuthentication`, `nodeEncryption`).
+- Свой Ingress/Gateway + health check, **без sticky** (JWT); не nginx из чарта (testing only).
+- PostgreSQL writer HA **в этом дата-центре**; приложение **не** ходит в read-only replica. JDBC через TLS — стандарт платформы.
+- Образ **2026.1.5**, не 2026.4.1 из дефолта Helm.
+- `jwtSecret` — свой, одинаковый на всех application-нодах (иначе сессии разъедутся).
+- Плагины ставить на **все** application-ноды; выкат = простой **всего** кластера.
+- PDB: не снимать сразу 2 из 3 search. HPA application: min 2; на апгрейд HPA выключить. Search HPA не масштабирует.
+- JDBC-пароль только из Secret, не plaintext deprecated-поля. Memory request = limit (поставщик: память несжимаема).
+- Не класть базу, application и search в один Docker-хост: для Docker-боя поставщик прямо говорит *different Docker hosts*.
 
-**Между ЦОДами:**
+**Между площадками:**
 
-| Площадок | Что где | Отказ ЦОД-1 |
+| Сколько площадок | Что где | Если умер активный дата-центр |
 |---|---|---|
-| **2 ЦОДа** | ЦОД-1: живой DCE. ЦОД-2: **cold** DCE + реплика Postgres (streaming/PITR). CI в штате ходит на VIP ЦОД-1 | Запись/UI стоят, пока оператор не переключил трафик и не сделал **forced reindex**. RPO > 0 при догоне архивом |
-| **3 ЦОДа** | ЦОД-3: второй cold **или** только бэкапы БД | То же; третий живой SQ = ещё одна лицензия и вторая «правда» Quality Gate |
+| **Две** | Первая: живой DCE. Вторая: **холодный** DCE + реплика Postgres (streaming/PITR). CI в штате ходит на VIP первой площадки | Запись/UI стоят, пока оператор не переключил трафик и не сделал **forced reindex**. RPO > 0 при догоне архивом. Время простоя замерить |
+| **Три** | Третья: второй холодный **или** только бэкапы базы | То же; третий живой SonarQube = ещё одна лицензия и вторая «правда» Quality Gate |
 
-Не ставить по DCE «в каждый кластер как Falco». Три полноценных инстанса — тройной LOC и тройные профили, обычно хуже.
+Не ставить по DCE «в каждый кластер как агент на ноде». Три полноценных инстанса — тройной LOC и тройные профили, обычно хуже.
 
-Без лицензии DCE прод-HA приложения **нет**: остаётся EE/DE + тот же cold DR (один процесс в ЦОД-1).
+Без лицензии DCE боевого HA приложения **нет**: остаётся Enterprise/Developer + тот же холодный запас (один процесс в первой площадке).
 
-### Предпосылки прода
+### Что должно быть до боевой установки
 
 - Ключ DCE (или честный отказ от HA приложения).
-- HA Postgres UTF-8, failover writer прогнан **без** SQ.
-- Sysctl на нодах; StorageClass SSD зональный **этого** ЦОДа.
+- HA Postgres UTF-8, failover writer прогнан **без** SonarQube.
+- Sysctl на нодах; StorageClass SSD зональный **этого** дата-центра.
 - CI-агенты доверяют CA прокси. Токены `sonar.token`, не пароль.
-- Секреты: JDBC, JWT (`applicationNodes.jwtSecret`), ES password, PKCS#12 — Vault. Нет `admin`/`admin`, нет `AdminAdmin_12$`.
+- Секреты: JDBC, JWT, пароль Elasticsearch, PKCS#12 — Vault. Нет `admin`/`admin`, нет `AdminAdmin_12$`.
+- Свой Ingress, свой registry, pin тега **2026.1.5** (digest), не `latest`.
 
-### Установка (DCE, ЦОД-1)
+### Порядок установки в активном дата-центре
+
+1. Sysctl на нодах (`524288` / file-max / seccomp), StorageClass SSD.
+2. Поднять HA PostgreSQL UTF-8, проверить failover writer **без** SonarQube.
+3. Установить DCE:
 
 ```bash
 helm upgrade --install sonarqube sonarqube/sonarqube-dce \
-  --version <чарт,-совместимый-с-LTA> \
+  --version <чарт, совместимый с LTA> \
   --set elasticsearch.javaOpts=-Xmx2g \
   --set applicationNodes.jwtSecret="<свой>" \
   --set jdbcOverwrite.jdbcUrl=jdbc:postgresql://pg-sonarqube-rw:5432/sonar \
   --set postgresql.enabled=false
 ```
 
-Точный флаг пина образа **2026.1.5** — в values чарта вашей поставки (часто `image.tag` / `applicationNodes.image.tag`); дефолт чарта 2026.4.1 **не** оставлять. JDBC-пароль только из Secret, не plaintext deprecated-поля.
+Точный флаг пина образа **2026.1.5** — в values чарта вашей поставки (часто `image.tag` / `applicationNodes.image.tag`); дефолт чарта 2026.4.1 **не** оставлять.
 
-Плагины ставить на **все** app nodes; выкат = простой **всего** кластера (цитата cluster-доки). ArgoCD вендор помечает как *not currently fully supported*.
+4. Включить ES authentication + TLS **до** боевых проектов. Свой Ingress HTTPS. `ingress-nginx.enabled=false`, `initSysctl.enabled=false`.
+5. Сменить админа, **переименовать** `sonar-administrators` **до** синхронизации групп с IdP. Force authentication оставить. Подключить IdP. Запретить анонимный анализ.
+6. Подключить один сервис из CI токеном, дождаться SUCCESS, настроить Quality Gate. Неделя шума правил, exceptions, **потом** обязательный блок merge.
+7. Мониторинг очереди CE (`pending_count` / `pending_time`), heap, диск search.
+8. Холодный кластер во второй площадке: отдельный Helm, bootstrap от реплики базы, **не** включён в балансировщик, пока не авария. После включения — reindex (UI может встать, Postgres жив).
 
-### Конфигурирование
+ArgoCD поставщик помечает как *not currently fully supported*.
 
-1. Сменить админа, **переименовать** `sonar-administrators` до синхронизации групп с IdP.
-2. Force authentication оставить. IdP (SAML/LDAP). Токены CI с правом Execute Analysis, ротация.
-3. Quality Gate в PR (Developer+). Политика: красный gate = нельзя в `main`.
-4. NetworkPolicy: 9000 только через HTTPS; 9001–9003 не с мира; JDBC только с app.
-5. `ingress-nginx.enabled=false`, `initSysctl.enabled=false`, memory request = limit (вендор: memory non-compressible).
-6. PDB: не снимать сразу 2 из 3 search.
-7. Мониторинг очереди CE (`pending_count` / `pending_time`), heap, диск search (≥10% свободно; watermark ES ~90–95%).
+### Правила конфигурации боя
 
-Cold в ЦОД-2: отдельный Helm, bootstrap от реплики БД, **не** включён в LB, пока не DR. После включения — reindex (UI может встать, Postgres жив).
+| Слой | Правило |
+|---|---|
+| Сеть | 9000 только через HTTPS; 9001–9003 не с мира; JDBC только с application-нод |
+| Секреты | Нет заводских паролей; свой JWT; свой пароль Elasticsearch; `monitoringPasscode` не из примера |
+| Сканеры | Токены project/global с правом Execute Analysis, срок жизни, ротация. Не пользовательский пароль. Агенты доверяют корпоративному CA |
+| Quality Gate | Developer+: красный порог = нельзя в `main` |
+| Плагины | Одинаковый набор на всех application; выкат только с простоем всего кластера |
+| Данные | Шифрование PVC и томов базы; `sonar.secretKeyPath` для паролей в конфиге; политика: фрагменты кода с персональными данными в индексе |
+| FIPS | Если включите — ES-auth DCE и часть SAML официально ограничены |
 
-### Масштабирование (когда появятся цифры)
+Workers Compute Engine в UI (Enterprise/DCE) **глобальны**: 4 workers × 2 ноды = **8** после рестарта всех application. Память CE увеличить **до** увеличения workers.
 
-1. Очередь CE → workers (EE/DCE, глобальные: число × app nodes) **после** запаса heap; HPA app (min 2) только если нет bottleneck на БД; на апгрейд HPA выкл.
-2. Индекс issues → RAM/диск search, не «ещё Kafka broker».
+### Как расти, когда появятся цифры нагрузки
+
+1. Очередь разбора → workers (Enterprise/DCE) **после** запаса heap; HPA application (min 2) только если нет узкого места на базе; на апгрейд HPA выкл.
+2. Индекс issues → RAM/диск search, не «ещё брокер Kafka». Ориентир валидации: 8 vCPU / 32 ГиБ на search при 200 млн issues — не ваша смета.
 3. Тяжёлый скан → агент CI. Search HPA **не** масштабирует.
+4. Референс «2 ядра / 4 ГиБ до 10 млн LOC» и «8 ядер / 16 ГиБ до 50 млн» — единица пересчёта, не список закупки. Advanced Security → +30% tablespace.
 
-### Проверка прода (пока это не пройдено — это не прод)
+### Проверки, без которых это ещё не бой
 
 1. О about: **2026.1.5**, не 2026.4.1.
-2. Убить 1 app: LB жив. Убить 1 search: кластер зелёный/стабильный по доке 2+3.
+2. Выключили один application — балансировщик продолжает отдавать UI. Выключили один search — кластер стабилен по документации 2+3.
 3. Сканер токеном, Background Task SUCCESS. Без токена — отказ.
-4. Failover writer Postgres **с** живым SQ (учение).
-5. На препроде: включить cold ЦОД-2, переключить VIP, **reindex**, замерить RTO. Ошибка promote = две правды, не «потом смержим».
+4. Failover writer Postgres **с** живым SonarQube (учение).
+5. На препроде: включить холодный кластер, переключить VIP, **reindex**, замерить RTO. Ошибка promote = две правды, не «потом смержим».
+6. Нет `admin`/`admin`, нет `AdminAdmin_12$`; 9001–9003 не с мира.
 
-### Сильные / слабые стороны прод-схемы (мозг в одном ЦОДе + cold DR)
+### Что хорошо и что плохо в схеме «мозг в одном дата-центре + холодный запас»
 
-| Сильное | Слабое |
+| Хорошо | Плохо |
 |---|---|
-| ES и JDBC не ходят между ЦОДами | Падение ЦОД-1 = нет SQ, пока DR |
-| Совпадает с документом Active-Cold | RTO включает reindex; минут в цитате вендора нет |
+| Elasticsearch и JDBC не ходят между дата-центрами | Падение первой площадки = нет SonarQube, пока DR |
+| Совпадает с документом Active-Cold | RTO включает переиндексацию; минут в цитате поставщика нет |
 | Одна лицензия, один Quality Gate | Без DCE нет HA приложения |
-| | Лицензия на инстанс/LOC — второй живой SQ считать отдельно |
+| | Лицензия на инстанс/LOC — второй живой сервер считать отдельно |
 
-**Не готов к проду**, если: Community/DE/EE «в трёх ЦОДах для HA»; H2; Helm Latest 2026.4.1 вместо LTA; `admin`/`admin` или `AdminAdmin_12$`; search на NFS; read-replica как второй живой SQ; stretch 9002 на 2–3 ЦОДа; CI обходит gate; ждут, что SQ заменит Falco/Wazuh.
+**Не готово к бою**, если: Community/Developer/Enterprise «в трёх дата-центрах для HA»; H2; Helm Latest 2026.4.1 вместо LTA; `admin`/`admin` или `AdminAdmin_12$`; search на NFS; read-replica как второй живой сервер; stretch 9002 на 2–3 дата-центра; CI обходит порог; ждут, что SonarQube заменит Falco/Wazuh.
 
 ---
 
-## Источники
+## Откуда цифры и имена образов
 
 - Загрузки LTA 2026.1.5: https://www.sonarsource.com/products/sonarqube/downloads/
 - DCE topology 2+3: https://docs.sonarsource.com/sonarqube-server/2026.1/server-installation/data-center-edition/dce-topology.md
 - DR Active-Cold, нет read-only DB, reindex: https://docs.sonarsource.com/sonarqube-server/2026.1/server-installation/data-center-edition/on-kubernetes-or-openshift/setting-up-disaster-recovery.md
-- БД, PostgreSQL 14–18, H2 не прод: https://docs.sonarsource.com/sonarqube-server/2026.1/server-installation/installing-the-database.md
+- База, PostgreSQL 14–18, H2 не прод: https://docs.sonarsource.com/sonarqube-server/2026.1/server-installation/installing-the-database.md
 - Helm sonarqube / sonarqube-dce: https://artifacthub.io/packages/helm/sonarqube/sonarqube
-- Правила: `SonarQube.md`
+- Правила и схема компонентов: `SonarQube.md`
