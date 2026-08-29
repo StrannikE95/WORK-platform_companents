@@ -1,5 +1,11 @@
 # ClickHouse 26.7.5.10 — назначение, состав и связи
 
+```mermaid
+stateDiagram-v2
+    state "Docker Engine" as Docker_Engine
+    ClickHouse --> Docker_Engine
+```
+
 ClickHouse — колоночная аналитическая СУБД. В карточке рассматривается собственная установка ClickHouse OSS **26.7.5.10-stable**, а не ClickHouse Cloud или ClickHouse Private. Для Kubernetes допустим Altinity Kubernetes Operator **0.27.3**. Если внутренняя политика требует линию с длительной поддержкой, весь контур переводят на **26.3.21.7-lts**; смешивать серверы и Keeper разных линий в одном кластере нельзя.
 
 Пошаговая установка вынесена в `ClickHouse.install.md`.

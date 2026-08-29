@@ -1,5 +1,12 @@
 # HAProxy 3.4.3 — развёртывание и настройка
 
+```mermaid
+stateDiagram-v2
+    state "Docker Engine" as Docker_Engine
+    HAProxy --> Docker_Engine
+    HAProxy --> Keepalived
+```
+
 HAProxy — балансировщик TCP и HTTP: принимает соединения и раскидывает их на живые серверы. Этот документ про **community** версию **3.4.3** (патч линии 3.4 LTS, опубликован 29 июля 2026; на дату подготовки — последний стабильный патч текущей LTS). Это не HAProxy Enterprise и не Ingress-контроллер Kubernetes (другой репозиторий и **другая** линия движка).
 
 Сайт: https://www.haproxy.org/  

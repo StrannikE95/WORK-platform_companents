@@ -1,5 +1,13 @@
 # OpenSearch Dashboards 3.8.0 — развёртывание и настройка
 
+```mermaid
+stateDiagram-v2
+    state "OpenSearch Dashboards" as OpenSearch_Dashboards
+    state "Docker Engine" as Docker_Engine
+    OpenSearch_Dashboards --> OpenSearch
+    OpenSearch_Dashboards --> Docker_Engine
+```
+
 OpenSearch Dashboards — веб-интерфейс к кластеру OpenSearch: Discover, визуализации, дашборды, часть админки прав доступа. Этот документ про **свою установку** версии **3.8.0** (тот же релиз, что кластер OpenSearch 3.8.0 от 4 августа 2026). Кластер поиска живёт без UI; UI без живого кластера бесполезен. Документ по кластеру: `OpenSearch.md`. Здесь — только слой Dashboards.
 
 Документация: https://docs.opensearch.org/latest/install-and-configure/install-dashboards/  

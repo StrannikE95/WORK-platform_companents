@@ -1,5 +1,11 @@
 # RabbitMQ 4.3.5 — назначение, состав и границы системы
 
+```mermaid
+stateDiagram-v2
+    state "Docker Engine" as Docker_Engine
+    RabbitMQ --> Docker_Engine
+```
+
 Версия ПО: **RabbitMQ 4.3.5** (релизная дата 17 августа 2026).
 Документация линейки: https://www.rabbitmq.com/docs/
 Релиз: https://github.com/rabbitmq/rabbitmq-server/releases/tag/v4.3.5

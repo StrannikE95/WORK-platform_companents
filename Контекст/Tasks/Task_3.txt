@@ -1,0 +1,17 @@
++ Для каждого ПО из папки \Out\
+    + Прочитает соответствующий файл "название_ПО".md 
+    + Добавь в начало соответствующего файла "название_ПО".md из папки \sample\ mermaid-диаграмму зависимостей технологий типа state diagram.
+        Например: для GeoData это стрелочки к:
+            + Cassandra;
+            + Elasticsearch;
+            + Haproxy;
+            + Kafka;
+            + Keepalived;
+            + Keycloak;
+            + Nexus Repository Manager;
+            + Swift;
+            + PostgreSQL;
+            + PostGIS;
+            + Redis
+
+    

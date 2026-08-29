@@ -1,5 +1,16 @@
 # Zabbix 7.0.30 LTS — назначение и состав
 
+```mermaid
+stateDiagram-v2
+    state "Docker Engine" as Docker_Engine
+    state "Docker Compose" as Docker_Compose
+    Zabbix --> Docker_Engine
+    Zabbix --> Docker_Compose
+    Zabbix --> PostgreSQL
+    Zabbix --> PHP
+    Zabbix --> Nginx
+```
+
 Zabbix — self-hosted-система наблюдения за инфраструктурой и сервисами. Для платформы зафиксирована версия **7.0.30 LTS**; это не Zabbix Cloud. Серверная часть использует модель active-passive: в каждый момент сбор, обработку и расчёт триггеров выполняет только одна активная нода.
 
 Документация: https://www.zabbix.com/documentation/7.0/en/manual/  

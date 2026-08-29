@@ -1,5 +1,16 @@
 # GitLab CI/CD 19.3.0 — развёртывание и настройка
 
+```mermaid
+stateDiagram-v2
+    state "GitLab CI" as GitLab_CI
+    state "GitLab Runner" as GitLab_Runner
+    state "Docker Engine" as Docker_Engine
+    GitLab_CI --> GitLab_Runner
+    GitLab_CI --> PostgreSQL
+    GitLab_CI --> Redis
+    GitLab_CI --> Docker_Engine
+```
+
 GitLab CI/CD — встроенный конвейер поставки: файл `.gitlab-ci.yml` в репозитории описывает, *что* собрать, протестировать и выкатить. Отдельного продукта «поставить только CI» нет. Без инстанса GitLab (репозитории, очередь работ, артефакты, API) агент сборки (Runner) не к чему регистрироваться. Этот документ покрывает **два контура**, которые вместе и есть GitLab CI: координатор (GitLab) и исполнители (Runner).
 
 Это **не** шина событий (Kafka), **не** процессный движок (Camunda) и не «кнопка DevOps включена».

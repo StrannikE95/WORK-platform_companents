@@ -1,5 +1,14 @@
 # Argo CD 3.5.2 — GitOps-доставка в Kubernetes
 
+```mermaid
+stateDiagram-v2
+    state "Argo CD" as Argo_CD
+    state "GitLab CI" as GitLab_CI
+    Argo_CD --> Kubernetes
+    Argo_CD --> Redis
+    Argo_CD --> GitLab_CI
+```
+
 Argo CD — декларативная система непрерывной доставки (**CD**) для Kubernetes. Она сравнивает желаемое состояние из Git с фактическими объектами кластера и синхронизирует различия. Этот документ фиксирует версию **3.5.2**, выпущенную 27 августа 2026 года.
 
 Документация: https://argo-cd.readthedocs.io/en/stable/

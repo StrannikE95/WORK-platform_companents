@@ -1,5 +1,12 @@
 # Redis Community Edition 7.4.11 — назначение и архитектура
 
+```mermaid
+stateDiagram-v2
+    state "Redis 7" as Redis_7
+    state "Docker Engine" as Docker_Engine
+    Redis_7 --> Docker_Engine
+```
+
 Redis — хранилище ключ–значение в оперативной памяти: кэш, сессии, короткие локи, идемпотентность. Этот документ описывает свою установку Community Edition 7.4.11 (релиз 17 августа 2026; на дату подготовки — последний патч линии 7.4, urgency `SECURITY`). Это не Redis Software, не Redis Cloud, не Redis Stack как отдельный бандл модулей и не линия 8.x.
 
 Документация OSS/Stack: https://redis.io/docs/latest/operate/oss_and_stack/  

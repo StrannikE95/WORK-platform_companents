@@ -1,5 +1,13 @@
 # MongoDB Community Server 7.0.40
 
+```mermaid
+stateDiagram-v2
+    state "MongoDB 7" as MongoDB_7
+    state "Docker Engine" as Docker_Engine
+    MongoDB_7 --> Docker_Engine
+    MongoDB_7 --> mongosh
+```
+
 MongoDB Community Server — документная СУБД, которая хранит JSON-подобные записи в формате BSON, ищет их по индексам и реплицирует между экземплярами `mongod`. В этом документе описаны назначение, функции, состав, порты и взаимодействие компонентов версии **7.0.40**. Это не Atlas, не Enterprise и не Percona Server for MongoDB.
 
 Документация линейки: https://www.mongodb.com/docs/v7.0/  

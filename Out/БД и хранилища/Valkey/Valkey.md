@@ -1,5 +1,11 @@
 # Valkey 9.1.1 — назначение и архитектура
 
+```mermaid
+stateDiagram-v2
+    state "Docker Engine" as Docker_Engine
+    Valkey --> Docker_Engine
+```
+
 Valkey — хранилище ключ–значение в оперативной памяти (форк Redis OSS под Linux Foundation): кэш, сессии, замки, лимиты. Рассматривается self-hosted Valkey версии **9.1.1**. Это не Redis Stack и не Redis Enterprise.
 
 Документация: https://valkey.io/  

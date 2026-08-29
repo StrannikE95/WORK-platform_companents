@@ -1,5 +1,11 @@
 # OpenSearch 3.8.0 — назначение и архитектура
 
+```mermaid
+stateDiagram-v2
+    state "Docker Engine" as Docker_Engine
+    OpenSearch --> Docker_Engine
+```
+
 OpenSearch — поисковый движок, который хранит JSON-документы в индексах, ищет по тексту и фильтрам и считает агрегации. Здесь описана собственная установка **OpenSearch 3.8.0**, а не Amazon OpenSearch Service и не Wazuh indexer.
 
 Документация: https://docs.opensearch.org/latest/  

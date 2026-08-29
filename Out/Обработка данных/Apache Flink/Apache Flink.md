@@ -1,5 +1,17 @@
 # Apache Flink 2.2.1 — назначение и архитектура
 
+```mermaid
+stateDiagram-v2
+    state "Apache Flink" as Apache_Flink
+    state "Docker Engine" as Docker_Engine
+    state "Flink Kubernetes Operator" as Flink_Kubernetes_Operator
+    state "Apache Kafka" as Apache_Kafka
+    Apache_Flink --> Docker_Engine
+    Apache_Flink --> Java
+    Apache_Flink --> Flink_Kubernetes_Operator
+    Apache_Flink --> Apache_Kafka
+```
+
 Apache Flink — движок обработки потоков и ограниченных наборов данных. В платформе используется Apache Flink **2.2.1** с Java **17**, Apache Flink Kubernetes Operator **1.15.0** и Apache Flink Kafka Connector **5.0.0**. Коннектор выпускается отдельно от ядра, поэтому его версия фиксируется явно.
 
 Flink **не** является шиной событий, эталонным хранилищем, системой управления бизнес-процессами, реестром схем или интеграционным API. Kafka, объектное хранилище, озеро данных, индекс, Camunda и корпоративные сервисы — отдельно развёрнутые системы.
@@ -237,7 +249,7 @@ flowchart LR
 
 Flink не использует UDP для перечисленных взаимодействий. Разрешение только `6123/TCP` не открывает весь необходимый внутренний обмен: динамические порты должны быть зафиксированы настройками или учтены в сетевой политике.
 
-## Подробное объяснение схемы
+### Как читать схему
 
 1. Клиент задания передаёт в Kubernetes API объект `FlinkDeployment`. Оператор наблюдает этот объект и приводит фактические экземпляры JobManager и TaskManager к описанному состоянию. Этот поток управляет жизненным циклом, но не переносит пользовательские события.
 2. Активный JobManager принимает граф задания, разбивает его на параллельные подзадачи и назначает их свободным слотам TaskManager. Связь управления идёт по внутренним RPC-вызовам. Пользовательские данные через JobManager обычно не проходят.

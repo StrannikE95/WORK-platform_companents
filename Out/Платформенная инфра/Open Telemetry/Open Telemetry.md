@@ -1,5 +1,16 @@
 # OpenTelemetry — стандартизация телеметрии приложений
 
+```mermaid
+stateDiagram-v2
+    state "Open Telemetry" as Open_Telemetry
+    state "OpenTelemetry Collector" as OpenTelemetry_Collector
+    state "Grafana Tempo" as Grafana_Tempo
+    Open_Telemetry --> OpenTelemetry_Collector
+    Open_Telemetry --> Grafana_Tempo
+    Open_Telemetry --> Prometheus
+    Open_Telemetry --> OpenSearch
+```
+
 OpenTelemetry (сокращённо OTel) — открытый набор спецификаций, API, SDK, инструментации, соглашений и протоколов для формирования и передачи трасс, метрик и логов. Это **не готовая система хранения, не интерфейс аналитики и не единый обязательный deployment**. Данные может принимать отдельно запущенный OpenTelemetry Collector либо совместимый endpoint, а хранит их выбранный бэкенд — например, Grafana Tempo, Prometheus или OpenSearch.
 
 Документация: https://opentelemetry.io/docs/  

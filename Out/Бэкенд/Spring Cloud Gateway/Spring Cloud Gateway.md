@@ -1,5 +1,14 @@
 # Spring Cloud Gateway 5.0.3
 
+```mermaid
+stateDiagram-v2
+    state "Spring Cloud Gateway" as Spring_Cloud_Gateway
+    state "Spring Boot" as Spring_Boot
+    Spring_Cloud_Gateway --> Spring_Boot
+    Spring_Cloud_Gateway --> JDK
+    Spring_Cloud_Gateway --> Maven
+```
+
 Spring Cloud Gateway — HTTP-шлюз, реализованный как библиотека внутри Spring Boot-приложения. Он принимает HTTP(S)-запрос, выбирает маршрут и передаёт запрос целевому сервису, применяя политики к запросу и ответу. Это не готовый серверный продукт, не Ingress-контроллер и не отдельный кластер уровня Kafka.
 
 Рассматриваемая версия — **Spring Cloud Gateway 5.0.3** из **Spring Cloud 2025.1.3 (Oakwood)**, основанного на **Spring Boot 4.0.8**. В 5.0.3 исправлена уязвимость **CVE-2026-47879**. Основной вариант документа — **Server WebFlux**; вариант **Server Web MVC** допустим как альтернатива, но имеет другой стартер, модель выполнения и пространство настроек. Одновременно включать оба варианта в одно приложение нельзя.

@@ -1,5 +1,18 @@
 # Apache Superset 6.1.0
 
+```mermaid
+stateDiagram-v2
+    state "Apache Superset" as Apache_Superset
+    state "Docker Engine" as Docker_Engine
+    state "Docker Compose" as Docker_Compose
+    Apache_Superset --> Docker_Engine
+    Apache_Superset --> Docker_Compose
+    Apache_Superset --> PostgreSQL
+    Apache_Superset --> Redis
+    Apache_Superset --> Kubernetes
+    Apache_Superset --> Helm
+```
+
 Apache Superset — self-hosted платформа бизнес-аналитики: пользователи строят графики и дашборды SQL-запросами к подключённым базам. Superset не хранит терабайты озера: он запрашивает внешние источники и визуализирует результат.
 
 Версия продукта: **6.1.0**. Образ: `apache/superset:6.1.0`. PyPI: `apache_superset==6.1.0`. Лицензия: **Apache License 2.0**.

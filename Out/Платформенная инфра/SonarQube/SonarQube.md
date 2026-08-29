@@ -1,5 +1,15 @@
 # SonarQube Server 2026.1.5 LTA — назначение и архитектура
 
+```mermaid
+stateDiagram-v2
+    state "Docker Engine" as Docker_Engine
+    state "GitLab CI" as GitLab_CI
+    SonarQube --> Docker_Engine
+    SonarQube --> PostgreSQL
+    SonarQube --> Elasticsearch
+    SonarQube --> GitLab_CI
+```
+
 SonarQube — сервер отчётов статического анализа кода. Сканер в CI анализирует исходный код во время сборки и передаёт результат серверу; сервер хранит результаты, показывает замечания и метрики и вычисляет порог качества для решения о слиянии изменений.
 
 Для коммерческого боевого контура рассматривается **SonarQube Server 2026.1.5 LTA**. **Community Build 26.8.x** — отдельная бесплатная линейка, а не бесплатная редакция Server LTA. Штатная отказоустойчивость самого приложения и кластер из нескольких узлов доступны только в **Data Center Edition (DCE)**.

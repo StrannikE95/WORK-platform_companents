@@ -1,5 +1,15 @@
 # OpenStack Swift 2.37.3 — назначение и архитектура
 
+```mermaid
+stateDiagram-v2
+    state "OpenStack Swift" as OpenStack_Swift
+    OpenStack_Swift --> Python
+    OpenStack_Swift --> Memcached
+    OpenStack_Swift --> SQLite
+    OpenStack_Swift --> rsync
+    OpenStack_Swift --> Keystone
+```
+
 OpenStack Swift — объектное хранилище: кладёте файл по имени в контейнер (бакет). Этот документ про **свою установку** версии **2.37.3**, серия OpenStack **2026.1 (Gazpacho)**. Проверено **26 августа 2026**: в релиз-нотах серии 2026.1 это последний номер линейки. **2.38.x** в current/unreleased — ещё не стабильная серия, в бой не берём. Это не Amazon S3, не MinIO, не Ceph RGW и не Swift 2.29.2 из инсталлятора GeoData.
 
 Документация: https://docs.openstack.org/swift/2026.1/  

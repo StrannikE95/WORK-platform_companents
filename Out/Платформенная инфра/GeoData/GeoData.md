@@ -1,5 +1,21 @@
 # GeoData 4.0.1 / workflow 4.0.2 — назначение, функции и состав
 
+```mermaid
+stateDiagram-v2
+    state "Nexus Repository Manager" as Nexus_Repository_Manager
+    GeoData --> Cassandra
+    GeoData --> Elasticsearch
+    GeoData --> HAProxy
+    GeoData --> Kafka
+    GeoData --> Keepalived
+    GeoData --> Keycloak
+    GeoData --> Nexus_Repository_Manager
+    GeoData --> Swift
+    GeoData --> PostgreSQL
+    GeoData --> PostGIS
+    GeoData --> Redis
+```
+
 GeoData — коммерческая low-code платформа ООО «АйТи Гео» (IT Geo) для управления данными, описания и исполнения процессов в нотации BPMN, пространственного анализа, интеграций, создания экранных форм и электронных документов с электронной подписью.
 
 Сайт продукта: https://datageo.ru/

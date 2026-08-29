@@ -1,5 +1,12 @@
 # Grafana 13.2.0 — развёртывание и настройка
 
+```mermaid
+stateDiagram-v2
+    state "Docker Engine" as Docker_Engine
+    Grafana --> Docker_Engine
+    Grafana --> Prometheus
+```
+
 Grafana — веб-приложение: рисует графики, дашборды, шлёт алерты. Само **не хранит** ряды метрик. Оно спрашивает другие системы (Prometheus, Loki, Tempo, PostgreSQL) и показывает ответ. Этот документ про **свою установку** версии **13.2.0** (релизная дата 18 августа 2026; на дату подготовки — последний стабильный релиз линии 13.2).
 
 Документация: https://grafana.com/docs/grafana/latest/  

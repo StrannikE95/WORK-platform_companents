@@ -1,5 +1,13 @@
 # Docker Engine 24.0.9 — развёртывание и настройка
 
+```mermaid
+stateDiagram-v2
+    state "Docker 24" as Docker_24
+    Docker_24 --> containerd
+    Docker_24 --> Buildx
+    Docker_24 --> Compose
+```
+
 Docker Engine — демон на одной Linux-машине: тянет образы, запускает контейнеры, собирает Dockerfile. Это **не** кластер и не Kubernetes. Один `dockerd` = один хост. Этот документ про **свою установку** версии **24.0.9** (последний патч линии 24.0; релиз **31 января 2024**).
 
 Релиз-ноты линии: https://docs.docker.com/engine/release-notes/24.0/  

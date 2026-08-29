@@ -1,5 +1,11 @@
 # Prometheus 3.13.2 LTS — назначение, состав и архитектура
 
+```mermaid
+stateDiagram-v2
+    state "Docker Engine" as Docker_Engine
+    Prometheus --> Docker_Engine
+```
+
 Prometheus — self-hosted система метрик: она сама обращается по HTTP к целям, забирает числовые измерения, хранит временные ряды, вычисляет правила и отвечает на запросы PromQL. В принятом профиле используется **Prometheus 3.13.2 LTS** и, для Kubernetes, **kube-prometheus-stack 88.3.0**: Prometheus Operator **v0.93.0**, Alertmanager **v0.33.1**, node-exporter **v1.12.1-distroless**.
 
 Документация: https://prometheus.io/docs/  

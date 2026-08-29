@@ -1,5 +1,15 @@
 # Camunda 8.9 — назначение, состав и взаимодействие компонентов
 
+```mermaid
+stateDiagram-v2
+    state "Camunda 8" as Camunda_8
+    state "Desktop Modeler" as Desktop_Modeler
+    Camunda_8 --> OpenJDK
+    Camunda_8 --> Desktop_Modeler
+    Camunda_8 --> OpenSearch
+    Camunda_8 --> PostgreSQL
+```
+
 Camunda 8 — платформа оркестрации долгих бизнес-процессов. Она исполняет модели процессов, хранит состояние каждого запущенного экземпляра и выдаёт работу внешним программам. Это **не** шина событий (роль Kafka), **не** хранилище клиентских досье и **не** интеграционный шлюз к ведомственным системам.
 
 Документ описывает прежде всего **Camunda 8 Self-Managed 8.9**: Helm-чарт `camunda-platform` **14.8.5**, образ Orchestration Cluster `camunda/camunda:8.9.17`. Совместимые версии соседних компонентов из матрицы чарта: Connectors `8.9.8`, Optimize `8.9.17`, Management Identity `8.9.8`, Web Modeler `8.9.7`, Console `8.9.88`.

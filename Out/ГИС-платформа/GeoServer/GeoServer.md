@@ -1,5 +1,14 @@
 # GeoServer 2.24.4 — развёртывание и настройка
 
+```mermaid
+stateDiagram-v2
+    state "Docker Engine" as Docker_Engine
+    GeoServer --> Docker_Engine
+    GeoServer --> Java
+    GeoServer --> Tomcat
+    GeoServer --> PostGIS
+```
+
 GeoServer — сервер картографических протоколов OGC: картинка карты (WMS), объекты (WFS), готовые квадратики тайлов (WMTS). Этот документ про **классический** GeoServer **2.24.4** (последний патч линии 2.24.x; релиз **18 июня 2024**, вместе с GeoTools 30.4 и GeoWebCache 1.24.4). Это не GeoServer Cloud (микросервисы и другой Helm) и не платформа GeoData ООО «АйТи Гео».
 
 Документация линии: https://docs-archive.geoserver.org/2.24.x/en/user/  

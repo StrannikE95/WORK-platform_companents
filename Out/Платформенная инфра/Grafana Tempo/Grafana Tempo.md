@@ -1,5 +1,19 @@
 # Grafana Tempo 3.0.3 — развёртывание и настройка
 
+```mermaid
+stateDiagram-v2
+    state "Grafana Tempo" as Grafana_Tempo
+    state "Docker Engine" as Docker_Engine
+    state "OpenTelemetry Collector" as OpenTelemetry_Collector
+    state "Apache Kafka" as Apache_Kafka
+    state "OpenStack Swift" as OpenStack_Swift
+    Grafana_Tempo --> Docker_Engine
+    Grafana_Tempo --> OpenTelemetry_Collector
+    Grafana_Tempo --> Grafana
+    Grafana_Tempo --> Apache_Kafka
+    Grafana_Tempo --> OpenStack_Swift
+```
+
 Grafana Tempo — бэкенд распределённой трассировки: хранит цепочки вызовов («клиент вызвал API → API дернул Kafka → Camunda ждала ведомство») и отдаёт их по Trace ID или через язык TraceQL. Этот документ про **свою установку** версии **3.0.3** (патч линии 3.0, опубликован 13 августа 2026; на дату подготовки — последний стабильный патч линии 3.0).
 
 Документация: https://grafana.com/docs/tempo/latest/  
@@ -109,7 +123,7 @@ flowchart LR
   class COL,GW,CACHE,GRAF,PROM,MG,L3 optional
 ```
 
-Как читать схему:
+### Как читать схему
 
 1. **Цвет определяет границу поставки.** Синие блоки — роли бинарника Tempo. Оранжевые — отдельное ПО или клиентская система; их установка, отказоустойчивость и обновление не входят в Tempo.
 2. **Сплошная стрелка — обязательный путь показанного микросервисного режима.** Пунктир означает опциональный блок или допустимый альтернативный маршрут. Например, Collector технически можно обойти, но для боя он рекомендуется как единая точка сэмплирования и фильтрации.

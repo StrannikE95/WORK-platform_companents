@@ -1,5 +1,11 @@
 # PostgreSQL 18.6
 
+```mermaid
+stateDiagram-v2
+    state "Docker Engine" as Docker_Engine
+    PostgreSQL --> Docker_Engine
+```
+
 PostgreSQL — реляционная система управления базами данных (СУБД). В платформе она хранит текущую согласованную версию операционных данных: карточки клиентов, реквизиты, статусы и связи. Целевая редакция — community PostgreSQL **18.6**. Это не Postgres Pro, EDB, Citus или Patroni.
 
 Документация PostgreSQL 18: https://www.postgresql.org/docs/18/
