@@ -1,28 +1,20 @@
-
 Ресурсы:
-+ 1 Linux-VM в закрытой сети; Docker должен иметь не менее **4 ГБ RAM**.
-  + Docker Engine и локальный постоянный том для `/usr/share/opensearch/data`. NFS не использовать как диск ноды.
-  + На Linux-хосте, в том числе внутри VM Docker Desktop: `vm.max_map_count ≥ 262144`.
-+ Образ: `opensearchproject/opensearch:3.8.0`, не `latest`. 
-+ JVM heap задавать с одинаковыми `Xms` и `Xmx`, ориентир вендора — около половины RAM; Ресурсов вендор не устанавливает. **2 vCPU, 4 ГБ RAM и 30 ГБ локального SSD**.
-+ Свободные порты:
-  + 443	Панели мониторинга OpenSearch в сервисе AWS OpenSearch с шифрованием при передаче данных (TLS)
-  + 5601	Панели мониторинга OpenSearch
-  + 9200	REST API OpenSearch
-  + 9300	Связь и транспорт между узлами (внутренний), межкластерный поиск
-  + 9600	Анализатор производительности
-+ Требования к хосту: https://docs.opensearch.org/latest/install-and-configure/install-opensearch/
+
+- Одна **Linux-VM**. ОС: Rocky Linux 8, Alma Linux 8, Amazon Linux 2/2023, Ubuntu 24.04; также Windows Server 2019. 
+  - [https://docs.opensearch.org/latest/install-and-configure/os-comp/](https://docs.opensearch.org/latest/install-and-configure/os-comp/)
+- ПО: Docker Engine; образ `opensearchproject/opensearch:3.8.0`, не `latest`. 
+  - [https://docs.opensearch.org/latest/version-history/](https://docs.opensearch.org/latest/version-history/)
+- Официальных минимумов **CPU и размера диска нет**. Вендор: Docker Desktop **≥ 4 ГБ RAM**; Диск ноды — локальный SSD, не NFS. Ориентир: **2 vCPU, 4 ГБ RAM, 30 ГБ локального SSD**. 
+  - [https://docs.opensearch.org/latest/install-and-configure/install-opensearch/index/](https://docs.opensearch.org/latest/install-and-configure/install-opensearch/index/)
+- Порты: **9200/TCP** REST, **9300/TCP** transport (узел↔узел), **9600/TCP** Performance Analyzer. **5601** — OpenSearch Dashboards, другое ПО.
 
 Установка:
-+ Docker: https://docs.opensearch.org/latest/install-and-configure/install-opensearch/docker/
-  + Перед запуском установить `vm.max_map_count=262144`. Начиная с OpenSearch 2.12, для demo-конфигурации обязателен собственный пароль `OPENSEARCH_INITIAL_ADMIN_PASSWORD`; без него контейнер не стартует.
-+ Helm: https://docs.opensearch.org/latest/install-and-configure/install-opensearch/helm/
 
-Первый вход:
-+ URL API: `https://127.0.0.1:9200`; логин `admin`, пароль задан при запуске. Заводского пароля для 3.8.0 нет.
-+ https://docs.opensearch.org/latest/security/configuration/demo-configuration/
+- Официальный quickstart — Docker, один контейнер `discovery.type=single-node`, тег **3.8.0**. 
+  - [https://docs.opensearch.org/latest/install-and-configure/install-opensearch/docker/](https://docs.opensearch.org/latest/install-and-configure/install-opensearch/docker/)
+  - [https://docs.opensearch.org/latest/security/configuration/demo-configuration/](https://docs.opensearch.org/latest/security/configuration/demo-configuration/)
+- Проверка: `https://127.0.0.1:9200`, пользователь `admin`, пароль из переменной
 
 Подключение:
-+ Приложения подключаются по REST/HTTPS к порту **9200**. Для каждого сервиса - отдельного пользователь с минимальными правами;
-+ Поток из Kafka пишет в OpenSearch через отдельный consumer, Kafka Connect или Data Prepper;
-+ Для Prod: https://docs.opensearch.org/latest/install-and-configure/install-opensearch/operator/
+
++ 

@@ -57,200 +57,266 @@ Git остаётся источником желаемого состояния,
 
 Argo CD состоит из контроллеров и сетевых сервисов, развёрнутых в Kubernetes. Долговременная конфигурация хранится преимущественно в Kubernetes-объектах и etcd, а желаемое состояние приложений — в Git. Redis является восстанавливаемым кэшем, а не базой данных истины.
 
-Ниже показано **проектное допущение** для трёх площадок при неизвестной задержке сети: по отдельному экземпляру Argo CD в каждом Kubernetes-кластере. Это уменьшает зависимость reconciliation от межплощадочной сети и радиус поражения. Альтернатива — один центральный экземпляр, управляющий несколькими кластерами; её можно выбирать только после проверки доступности Kubernetes API, RTT, модели cluster credentials и допустимой общей зоны отказа.
+**Допущение схемы:** одна площадка, один Kubernetes-кластер, один экземпляр Argo CD **3.5.2**. Stretch control plane на несколько дата-центров нет: порога допустимого RTT у Argo CD для этого нет, а Git и Kubernetes API должны быть доступны этому экземпляру. Продукт умеет управлять несколькими кластерами из одного control plane, но это отдельное решение про сеть, cluster credentials и зону отказа; на схеме его нет.
+
+**Сильная сторона** одного локального экземпляра: reconciliation идёт к своему Kubernetes API без межплощадочной сети, blast radius ограничен этой площадкой. **Слабая:** отказ этой площадки вместе с её etcd останавливает и Argo CD, и новые выкладки; уже запущенные приложения при этом продолжают работать, пока жив сам runtime. **Критично:** не публиковать UI без TLS; не давать `cluster-admin` «по умолчанию»; не хранить открытые секреты в Git; не включать auto-sync+prune+self-heal без теста удаления.
+
+Архитектура: https://argo-cd.readthedocs.io/en/stable/operator-manual/architecture/  
+HA: https://argo-cd.readthedocs.io/en/stable/operator-manual/high_availability/
 
 ### Схема инстансов и потоков
 
+Имена внутри блоков — роли, не обязательные DNS-имена. Сплошная стрелка — рабочий поток показанной базовой схемы; пунктир — опциональный путь. Направление стрелки — кто открывает соединение. Рамки subgraph **без заливки**: цвет задаёт сам квадратик, подложка его не перекрашивает.
+
 ```mermaid
-flowchart TB
-  USER["EXT-USER<br/>Разработчики и platform team"]
-  CI["EXT-CI<br/>GitLab CI"]
-  GIT["EXT-GIT<br/>Git/GitLab: GitOps-репозитории"]
-  IDP["EXT-IDP<br/>Корпоративный OIDC/SSO IdP"]
-  PROM["EXT-PROM<br/>Prometheus"]
-  SECRETS["EXT-SEC<br/>Vault / External Secrets / SOPS / Sealed Secrets"]
-  CHANNEL["EXT-MSG<br/>Почта / Slack / webhook-получатель"]
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#d9ead3", "primaryTextColor": "#000000", "primaryBorderColor": "#38761d", "lineColor": "#5b5b5b", "secondaryColor": "#cfe2f3", "tertiaryColor": "#fff2cc", "clusterBkg": "transparent", "clusterBorder": "#666666"}}}%%
+flowchart LR
+  USER["USER — разработчики и platform team"]
 
-  subgraph SITE_A["Площадка A — Kubernetes-кластер A"]
-    direction TB
-    subgraph ARGO_A["INST-A — экземпляр Argo CD 3.5.2"]
-      direction LR
-      API_A["A-API<br/>argocd-server"]
-      CTRL_A["A-CTRL<br/>application-controller"]
-      REPO_A["A-REPO<br/>repo-server"]
-      APPSET_A["A-APPSET<br/>applicationset-controller"]
-      REDIS_A["A-CACHE<br/>Redis"]
-      DEX_A["A-DEX<br/>Dex, опционально"]
-      NOTIF_A["A-NOTIFY<br/>notifications-controller, опционально"]
-      COMMIT_A["A-COMMIT<br/>commit-server, beta и опционально"]
-    end
-    KAPI_A["EXT-K8S-A<br/>Kubernetes API + etcd кластера A"]
-    WORK_A["EXT-WORK-A<br/>Workloads площадки A"]
+  subgraph EXT["Отдельно развёрнутые системы"]
+    CI["CI — GitLab CI"]
+    GIT["GIT — Git/GitLab: GitOps-репозитории"]
+    ING["ING — Ingress / Load Balancer"]
+    IDP["IDP — корпоративный OIDC/SSO IdP"]
+    PROM["PROM — Prometheus"]
+    SECRETS["SEC — Vault / External Secrets / SOPS / Sealed Secrets"]
+    CHANNEL["MSG — почта / Slack / webhook"]
   end
 
-  subgraph SITE_B["Площадка B — Kubernetes-кластер B"]
-    direction TB
-    subgraph ARGO_B["INST-B — экземпляр Argo CD 3.5.2"]
-      direction LR
-      API_B["B-API<br/>argocd-server"]
-      CTRL_B["B-CTRL<br/>application-controller"]
-      REPO_B["B-REPO<br/>repo-server"]
-      APPSET_B["B-APPSET<br/>applicationset-controller"]
-      REDIS_B["B-CACHE<br/>Redis"]
-      DEX_B["B-DEX<br/>Dex, опционально"]
-      NOTIF_B["B-NOTIFY<br/>notifications-controller, опционально"]
-      COMMIT_B["B-COMMIT<br/>commit-server, beta и опционально"]
-    end
-    KAPI_B["EXT-K8S-B<br/>Kubernetes API + etcd кластера B"]
-    WORK_B["EXT-WORK-B<br/>Workloads площадки B"]
-  end
-
-  subgraph SITE_C["Площадка C — Kubernetes-кластер C"]
-    direction TB
-    subgraph ARGO_C["INST-C — экземпляр Argo CD 3.5.2"]
-      direction LR
-      API_C["C-API<br/>argocd-server"]
-      CTRL_C["C-CTRL<br/>application-controller"]
-      REPO_C["C-REPO<br/>repo-server"]
-      APPSET_C["C-APPSET<br/>applicationset-controller"]
-      REDIS_C["C-CACHE<br/>Redis"]
-      DEX_C["C-DEX<br/>Dex, опционально"]
-      NOTIF_C["C-NOTIFY<br/>notifications-controller, опционально"]
-      COMMIT_C["C-COMMIT<br/>commit-server, beta и опционально"]
-    end
-    KAPI_C["EXT-K8S-C<br/>Kubernetes API + etcd кластера C"]
-    WORK_C["EXT-WORK-C<br/>Workloads площадки C"]
+  subgraph SITE["Площадка 1 — Kubernetes-кластер"]
+    API["API — argocd-server"]
+    CTRL["CTRL — application-controller"]
+    REPO["REPO — repo-server"]
+    APPSET["APPSET — applicationset-controller"]
+    REDIS[("CACHE — Redis")]
+    DEX["DEX — Dex"]
+    NOTIF["NOTIFY — notifications-controller"]
+    COMMIT["COMMIT — commit-server"]
+    KAPI["K8S — Kubernetes API + etcd"]
+    WORK["WORK — workloads площадки"]
   end
 
   USER -->|"1. merge request"| CI
-  CI -->|"2. immutable image digest / фиксированный tag<br/>и commit конфигурации"| GIT
-  USER -->|"3. HTTPS/gRPC: UI и CLI"| API_A
-  USER -->|"3. HTTPS/gRPC: UI и CLI"| API_B
-  USER -->|"3. HTTPS/gRPC: UI и CLI"| API_C
-  GIT -.->|"4. webhook, опциональное ускорение"| API_A
-  GIT -.->|"4. webhook, опциональное ускорение"| API_B
-  GIT -.->|"4. webhook, опциональное ускорение"| API_C
+  CI -->|"2. digest / фиксированный tag<br/>и commit конфигурации"| GIT
+  USER -->|"3. HTTPS/gRPC: UI и CLI"| ING
+  ING -->|"TLS → UI/API"| API
+  GIT -.->|"4. webhook, опционально"| API
 
-  API_A -->|"операции и статус"| CTRL_A
-  CTRL_A -->|"5. запрос манифестов"| REPO_A
-  REPO_A -->|"6. clone/fetch, read-only"| GIT
-  CTRL_A -->|"7. read/diff/apply/prune"| KAPI_A
-  APPSET_A -->|"создание/изменение Application CR"| KAPI_A
-  KAPI_A -->|"запуск и состояние объектов"| WORK_A
-  API_A --> REDIS_A
-  CTRL_A --> REDIS_A
-  REPO_A --> REDIS_A
-  API_A -.->|"OIDC через broker"| DEX_A
-  DEX_A -.->|"аутентификация"| IDP
-  NOTIF_A -.->|"наблюдение Application/AppProject"| KAPI_A
-  NOTIF_A -.->|"уведомление"| CHANNEL
-  REPO_A -.->|"hydrated manifests"| COMMIT_A
-  COMMIT_A -.->|"Git push при Source Hydrator"| GIT
+  API -->|"операции и статус"| CTRL
+  CTRL -->|"5. запрос манифестов"| REPO
+  REPO -->|"6. clone/fetch, read-only"| GIT
+  CTRL -->|"7. read/diff/apply/prune"| KAPI
+  APPSET -->|"Application CR"| KAPI
+  KAPI -->|"запуск и состояние объектов"| WORK
+  API --> REDIS
+  CTRL --> REDIS
+  REPO --> REDIS
+  API -.->|"OIDC через broker"| DEX
+  DEX -.->|"аутентификация"| IDP
+  NOTIF -.->|"наблюдение Application/AppProject"| KAPI
+  NOTIF -.->|"уведомление"| CHANNEL
+  REPO -.->|"hydrated manifests"| COMMIT
+  COMMIT -.->|"Git push при Source Hydrator"| GIT
+  SECRETS -.->|"8. доставка секретов"| KAPI
+  PROM -.->|"9. scrape /metrics"| API
+  PROM -.->|"9. scrape /metrics"| CTRL
+  PROM -.->|"9. scrape /metrics"| REPO
 
-  API_B -->|"операции и статус"| CTRL_B
-  CTRL_B -->|"5. запрос манифестов"| REPO_B
-  REPO_B -->|"6. clone/fetch, read-only"| GIT
-  CTRL_B -->|"7. read/diff/apply/prune"| KAPI_B
-  APPSET_B -->|"создание/изменение Application CR"| KAPI_B
-  KAPI_B -->|"запуск и состояние объектов"| WORK_B
-  API_B --> REDIS_B
-  CTRL_B --> REDIS_B
-  REPO_B --> REDIS_B
-  API_B -.->|"OIDC через broker"| DEX_B
-  DEX_B -.->|"аутентификация"| IDP
-  NOTIF_B -.->|"наблюдение Application/AppProject"| KAPI_B
-  NOTIF_B -.->|"уведомление"| CHANNEL
-  REPO_B -.->|"hydrated manifests"| COMMIT_B
-  COMMIT_B -.->|"Git push при Source Hydrator"| GIT
+  L_ARGO["Argo CD: обязательный компонент"]
+  L_OPT["Argo CD: опциональный компонент"]
+  L_EXT["Внешняя система / отдельное ПО"]
+  L_CACHE[("Кэш / хранилище другого ПО")]
 
-  API_C -->|"операции и статус"| CTRL_C
-  CTRL_C -->|"5. запрос манифестов"| REPO_C
-  REPO_C -->|"6. clone/fetch, read-only"| GIT
-  CTRL_C -->|"7. read/diff/apply/prune"| KAPI_C
-  APPSET_C -->|"создание/изменение Application CR"| KAPI_C
-  KAPI_C -->|"запуск и состояние объектов"| WORK_C
-  API_C --> REDIS_C
-  CTRL_C --> REDIS_C
-  REPO_C --> REDIS_C
-  API_C -.->|"OIDC через broker"| DEX_C
-  DEX_C -.->|"аутентификация"| IDP
-  NOTIF_C -.->|"наблюдение Application/AppProject"| KAPI_C
-  NOTIF_C -.->|"уведомление"| CHANNEL
-  REPO_C -.->|"hydrated manifests"| COMMIT_C
-  COMMIT_C -.->|"Git push при Source Hydrator"| GIT
+  style EXT fill:none,stroke:#0b5394,color:#000000
+  style SITE fill:none,stroke:#38761d,color:#000000
 
-  SECRETS -.->|"8. отдельный механизм доставки секретов"| KAPI_A
-  SECRETS -.->|"8. отдельный механизм доставки секретов"| KAPI_B
-  SECRETS -.->|"8. отдельный механизм доставки секретов"| KAPI_C
-  PROM -.->|"9. scrape /metrics"| API_A
-  PROM -.->|"9. scrape /metrics"| CTRL_A
-  PROM -.->|"9. scrape /metrics"| REPO_A
-  PROM -.->|"9. scrape /metrics"| API_B
-  PROM -.->|"9. scrape /metrics"| CTRL_B
-  PROM -.->|"9. scrape /metrics"| REPO_B
-  PROM -.->|"9. scrape /metrics"| API_C
-  PROM -.->|"9. scrape /metrics"| CTRL_C
-  PROM -.->|"9. scrape /metrics"| REPO_C
+  style API fill:#d9ead3,stroke:#38761d,color:#000000,stroke-width:2px
+  style CTRL fill:#d9ead3,stroke:#38761d,color:#000000,stroke-width:2px
+  style REPO fill:#d9ead3,stroke:#38761d,color:#000000,stroke-width:2px
+  style L_ARGO fill:#d9ead3,stroke:#38761d,color:#000000,stroke-width:2px
 
-  LEGEND_INTERNAL["Легенда: синий — компонент Argo CD"]
-  LEGEND_EXTERNAL["Легенда: оранжевый — внешняя система"]
-  LEGEND_OPTIONAL["Легенда: пунктир — опциональный поток или компонент"]
+  style APPSET fill:#fff2cc,stroke:#bf9000,color:#000000,stroke-width:2px,stroke-dasharray:5 3
+  style DEX fill:#fff2cc,stroke:#bf9000,color:#000000,stroke-width:2px,stroke-dasharray:5 3
+  style NOTIF fill:#fff2cc,stroke:#bf9000,color:#000000,stroke-width:2px,stroke-dasharray:5 3
+  style COMMIT fill:#fff2cc,stroke:#bf9000,color:#000000,stroke-width:2px,stroke-dasharray:5 3
+  style L_OPT fill:#fff2cc,stroke:#bf9000,color:#000000,stroke-width:2px,stroke-dasharray:5 3
 
-  classDef internal fill:#dae8fc,stroke:#6c8ebf,color:#000;
-  classDef external fill:#ffe6cc,stroke:#d79b00,color:#000;
-  classDef optional fill:#e1d5e7,stroke:#9673a6,color:#000,stroke-dasharray: 5 5;
-  classDef legend fill:#f5f5f5,stroke:#666,color:#000;
+  style USER fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style CI fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style GIT fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style ING fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style IDP fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style PROM fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style SECRETS fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style CHANNEL fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style KAPI fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style WORK fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style L_EXT fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
 
-  class API_A,CTRL_A,REPO_A,APPSET_A,REDIS_A,API_B,CTRL_B,REPO_B,APPSET_B,REDIS_B,API_C,CTRL_C,REPO_C,APPSET_C,REDIS_C internal;
-  class USER,CI,GIT,IDP,PROM,SECRETS,CHANNEL,KAPI_A,WORK_A,KAPI_B,WORK_B,KAPI_C,WORK_C external;
-  class DEX_A,NOTIF_A,COMMIT_A,DEX_B,NOTIF_B,COMMIT_B,DEX_C,NOTIF_C,COMMIT_C optional;
-  class LEGEND_INTERNAL,LEGEND_EXTERNAL,LEGEND_OPTIONAL legend;
+  style REDIS fill:#ead1dc,stroke:#741b47,color:#000000,stroke-width:2px
+  style L_CACHE fill:#ead1dc,stroke:#741b47,color:#000000,stroke-width:2px
 ```
 
-Сплошная стрелка обозначает обязательный для показанного базового потока вызов, пунктирная — опциональную интеграцию. Цвет показывает принадлежность, а не степень доверия: оранжевый Kubernetes API остаётся критической внешней зависимостью каждого экземпляра.
+**Легенда:**
+
+- <span style="color:#38761d">■</span> **Зелёный** — процессы Argo CD, без которых базовый GitOps-контур не работает (`argocd-server`, application-controller, repo-server).
+- <span style="color:#bf9000">■</span> **Жёлтый, пунктирная рамка** — компоненты поставки Argo CD, которые на одной площадке можно не использовать (ApplicationSet, Dex, Notifications, commit-server).
+- <span style="color:#0b5394">■</span> **Синий** — отдельно развёрнутые системы и участники. Argo CD их не кластеризует и не заменяет.
+- <span style="color:#741b47">■</span> **Розовый цилиндр** — Redis как кэш другого ПО. Он входит в манифест поставки, но не является источником истины.
 
 ### Описание блоков
 
-Повторяющиеся блоки `A-*`, `B-*` и `C-*` имеют одинаковую роль, но являются отдельными Deployment/Service/Pod-наборами в соответствующих кластерах. Их отказ и credentials не должны автоматически распространяться на другие площадки.
+#### USER — разработчики и platform team
 
-- **`EXT-USER` — разработчики и platform team.** Люди и их рабочие станции с браузером, Git-клиентом и `argocd` CLI. Создают merge request, рассматривают diff и запускают разрешённые операции. Это внешние участники, не компонент Argo CD.
-- **`EXT-CI` — GitLab CI.** Внешняя CI-система: тестирует код, собирает и сканирует образ, публикует неизменяемый digest или фиксированный tag и изменяет GitOps-репозиторий. Не должна параллельно выполнять `kubectl apply` для тех же ресурсов.
-- **`EXT-GIT` — Git/GitLab.** Внешний Git-сервис и источник желаемого состояния. Хранит историю, манифесты, Helm values или Kustomize overlays. Для обычного потока repo-server получает read-only credentials; write-доступ требуется только опциональному Source Hydrator/commit-server.
-- **`EXT-IDP` — корпоративный IdP.** Внешний OIDC-провайдер идентификации, например Keycloak или корпоративный сервис. Выдаёт identity claims и группы для RBAC. Опционален технически, но для production SSO предпочтительнее постоянного использования встроенного `admin`.
-- **`EXT-PROM` — Prometheus.** Отдельно развёрнутая система мониторинга, которая снимает метрики с endpoint компонентов. Не входит в Argo CD; её отказ не останавливает уже работающие приложения.
-- **`EXT-SEC` — механизм секретов.** Внешняя интеграция: Vault с External Secrets Operator, SOPS или Sealed Secrets. Эти варианты различаются архитектурой и не входят в ядро Argo CD. Открытые пароли и токены хранить в Git нельзя.
-- **`EXT-MSG` — канал уведомлений.** Отдельная почтовая система, Slack-совместимый канал или HTTP webhook-получатель. Нужен только при использовании Notifications controller.
-- **`INST-A`, `INST-B`, `INST-C` — экземпляры Argo CD.** Три независимо развёрнутых control plane Argo CD 3.5.2. Каждый управляет локальным кластером в базовой схеме. Вариант, где один экземпляр управляет удалёнными кластерами, поддерживается, но требует отдельного сетевого и security-решения.
-- **`A/B/C-API` — `argocd-server`.** Stateless-сервис на Go с Web UI, REST/gRPC API, endpoint Git webhook, аутентификацией и проверкой RBAC. Входит в Argo CD и разворачивается внутри каждого экземпляра; в HA-варианте масштабируется несколькими репликами за Kubernetes Service/Ingress.
-- **`A/B/C-CTRL` — `argocd-application-controller`.** Kubernetes controller на Go. Читает `Application`, запрашивает манифесты у repo-server, сравнивает desired/live state, вычисляет health и выполняет sync, hooks и prune. Встроен в Argo CD; права к Kubernetes должны быть минимально достаточными, а не безусловный `cluster-admin`.
-- **`A/B/C-REPO` — `argocd-repo-server`.** Внутренний gRPC-сервис на Go. Клонирует разрешённые Git/Helm/OCI-источники, кэширует данные и генерирует итоговые манифесты через встроенные Helm, Kustomize, Jsonnet или sidecar Config Management Plugin. Входит в Argo CD и разворачивается отдельно от controller; ему не нужны права на применение объектов в Kubernetes.
-- **`A/B/C-APPSET` — `argocd-applicationset-controller`.** Kubernetes controller на Go, создающий и изменяющий объекты `Application` по generators и template. Входит в поставку и разворачивается отдельным Deployment. Опционален по использованию: без `ApplicationSet` обычные `Application` продолжают работать.
-- **`A/B/C-CACHE` — Redis.** Отдельный Pod/набор Pod внутри поставки Argo CD, используемый как восстанавливаемый кэш и средство обмена кэшированными данными. Redis не является источником истины. В non-HA-манифесте применяется простой вариант; HA-поставка использует HA-топологию, но HA Redis не делает доступными остальные компоненты автоматически.
-- **`A/B/C-DEX` — Dex.** Опциональный identity broker, поставляемый отдельным Deployment в стандартных манифестах. Соединяет `argocd-server` с поддерживаемыми identity-коннекторами. Можно не использовать, если `argocd-server` подключён к OIDC-провайдеру напрямую.
-- **`A/B/C-NOTIFY` — Notifications controller.** Опционально используемый отдельный controller из поставки Argo CD. Наблюдает ресурсы и отправляет уведомления по templates/triggers в настроенные внешние сервисы. Не участвует в reconciliation и sync.
-- **`A/B/C-COMMIT` — commit-server.** Опциональный внутренний gRPC-сервис Source Hydrator. В Argo CD 3.5 функция beta и выключена по умолчанию; сервис принимает сгенерированные манифесты и выполняет Git push в настроенную ветку. Разворачивается отдельно, требует write credentials и не нужен обычному pull-based GitOps-потоку.
-- **`EXT-K8S-A/B/C` — Kubernetes API и etcd.** Внешний относительно Argo CD control plane API управляемого кластера и его хранилище состояния. Здесь находятся CRD/CR `Application`, `AppProject`, `ApplicationSet`, cluster/repository Secrets и живые workload-объекты. Kubernetes развёрнут отдельно; Argo CD не резервирует и не восстанавливает etcd.
-- **`EXT-WORK-A/B/C` — workloads.** Управляемые приложения и инфраструктурные Kubernetes-объекты площадки: Deployment, StatefulSet, Service, Kafka/Camunda-компоненты и другие ресурсы. Они развёрнуты отдельно от Argo CD и после потери Argo CD продолжают работать, пока зависящие от них runtime-системы исправны.
-- **`LEGEND-*` — легенда.** Служебные блоки диаграммы: синий означает компоненты Argo CD, оранжевый — внешние системы, фиолетовый пунктирный блок и пунктирные стрелки — опциональность. Они не представляют runtime-компоненты.
+- **Что это:** люди и их рабочие станции.
+- **Технологии и варианты:** браузер, Git-клиент, `argocd` CLI той же версии **3.5.2**.
+- **Назначение:** создавать merge request, смотреть diff и запускать разрешённые операции UI/CLI.
+- **Развёртывание:** внешние участники, не компонент Argo CD.
+
+#### CI — GitLab CI
+
+- **Что это:** внешняя система непрерывной интеграции.
+- **Технологии и варианты:** GitLab CI; конкретный executor и registry задаёт контур CI, не Argo CD.
+- **Назначение:** тестировать код, собрать и просканировать образ, зафиксировать неизменяемый digest или фиксированный tag и изменить GitOps-репозиторий. Не должна параллельно выполнять `kubectl apply` для тех же ресурсов.
+- **Развёртывание:** отдельно развёрнутая система. Argo CD — CD/GitOps, не CI. ([CI automation](https://argo-cd.readthedocs.io/en/stable/user-guide/ci_automation/))
+
+#### GIT — Git/GitLab: GitOps-репозитории
+
+- **Что это:** Git-сервис и источник желаемого состояния.
+- **Технологии и варианты:** GitLab или иной Git; содержимое — plain YAML, Helm values, Kustomize overlays или Jsonnet. Для обычного потока repo-server использует read-only credentials; write нужен только Source Hydrator.
+- **Назначение:** хранить историю и манифесты, по которым Argo CD сверяет кластер.
+- **Развёртывание:** отдельно развёрнутая система. Git — desired state; Kubernetes/etcd — live state.
+
+#### ING — Ingress / Load Balancer
+
+- **Что это:** внешняя точка входа HTTPS/gRPC к `argocd-server`.
+- **Технологии и варианты:** Ingress-контроллер платформы, Service типа LoadBalancer или внешний балансировщик; схема должна учитывать HTTPS и gRPC. ([Ingress](https://argo-cd.readthedocs.io/en/stable/operator-manual/ingress/))
+- **Назначение:** публиковать UI/API с TLS. `kubectl port-forward` — только стенд или диагностика, не боевой вход.
+- **Развёртывание:** отдельно развёрнутая система, не входит в Argo CD.
+
+#### IDP — корпоративный OIDC/SSO IdP
+
+- **Что это:** внешний провайдер идентификации.
+- **Технологии и варианты:** Keycloak, иной корпоративный OIDC; либо прямой OIDC в `argocd-server`, либо через Dex. ([user management](https://argo-cd.readthedocs.io/en/stable/operator-manual/user-management/))
+- **Назначение:** выдать identity claims и группы для RBAC. После проверки SSO встроенного `admin` отключают.
+- **Развёртывание:** отдельно развёрнутая система. Технически опционален, для production SSO предпочтителен.
+
+#### PROM — Prometheus
+
+- **Что это:** система сбора метрик.
+- **Технологии и варианты:** Prometheus; scrape endpoint компонентов версии `v3.5.2`. ([metrics](https://argo-cd.readthedocs.io/en/stable/operator-manual/metrics/))
+- **Назначение:** наблюдать control plane. Не участвует в sync и не останавливает уже работающие приложения при своём отказе.
+- **Развёртывание:** отдельно развёрнутая система.
+
+#### SEC — механизм секретов
+
+- **Что это:** отдельный контур доставки секретов в Kubernetes.
+- **Технологии и варианты:** Vault + External Secrets Operator; SOPS; Sealed Secrets. Архитектуры разные, в ядро Argo CD не входят. Открытые пароли и токены в Git запрещены.
+- **Назначение:** дать кластеру секреты, не складывая их открытым текстом в GitOps-репозиторий. Argo CD может синхронизировать ссылки, зашифрованные файлы или CR внешнего оператора, но сам хранилищем секретов не является.
+- **Развёртывание:** отдельно развёрнутая система / отдельный оператор.
+
+#### MSG — почта / Slack / webhook
+
+- **Что это:** внешний канал событийных уведомлений.
+- **Технологии и варианты:** SMTP, Slack-совместимый API, HTTP webhook; конкретный сервис задаёт Notifications controller, не Argo CD.
+- **Назначение:** сообщить о смене статуса Application/AppProject. Нужен только если включён Notifications.
+- **Развёртывание:** отдельно развёрнутая система.
+
+#### API — argocd-server
+
+- **Что это:** API-сервер и Web UI экземпляра.
+- **Технологии и варианты:** процесс `argocd-server` на Go; образ `quay.io/argoproj/argocd:v3.5.2`. Stateless; в HA — несколько реплик за Service/Ingress. ([architecture](https://argo-cd.readthedocs.io/en/stable/operator-manual/architecture/))
+- **Назначение:** UI, REST/gRPC API, CLI, auth/RBAC, приём Git webhook.
+- **Развёртывание:** входит в Argo CD, ставится в namespace экземпляра на этой площадке.
+
+#### CTRL — application-controller
+
+- **Что это:** Kubernetes-контроллер приложений.
+- **Технологии и варианты:** `argocd-application-controller` на Go, тот же образ `v3.5.2`. Число реплик и шардирование — только после измерений, не из «типовых» CPU/RAM. ([HA](https://argo-cd.readthedocs.io/en/stable/operator-manual/high_availability/))
+- **Назначение:** читать `Application`, запросить манифесты у repo-server, сравнить desired/live state, посчитать health, выполнить sync, hooks и prune.
+- **Развёртывание:** входит в Argo CD. Права к Kubernetes — минимально достаточные, не безусловный `cluster-admin`.
+
+#### REPO — repo-server
+
+- **Что это:** внутренний сервис генерации манифестов.
+- **Технологии и варианты:** `argocd-repo-server` на Go, gRPC **8081**; генераторы — встроенные Helm, Kustomize, Jsonnet или sidecar Config Management Plugin. Непроверенный plugin с произвольным кодом из репозитория не использовать. ([architecture](https://argo-cd.readthedocs.io/en/stable/operator-manual/architecture/))
+- **Назначение:** clone/fetch разрешённых Git/Helm/OCI-источников и собрать итоговые манифесты. Сам объекты в кластер не применяет.
+- **Развёртывание:** входит в Argo CD, отдельный Deployment от controller.
+
+#### APPSET — applicationset-controller
+
+- **Что это:** контроллер, который создаёт и сопровождает объекты `Application`.
+- **Технологии и варианты:** `argocd-applicationset-controller` из поставки 3.5.2; generators — список кластеров, Git directories/files, явный list и другие, описанные в документации. ([ApplicationSet](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/))
+- **Назначение:** размножить однотипные `Application` по шаблону. Без него обычные `Application` продолжают работать.
+- **Развёртывание:** входит в поставку Argo CD; использование опционально.
+
+#### CACHE — Redis
+
+- **Что это:** восстанавливаемый кэш между компонентами Argo CD.
+- **Технологии и варианты:** Redis из манифеста поставки. Non-HA — одиночный экземпляр; HA-манифест — HA-топология с Sentinel. Redis Cluster как замена этой поставки официальная HA-схема не описывает. ([HA](https://argo-cd.readthedocs.io/en/stable/operator-manual/high_availability/))
+- **Назначение:** снизить повторные обращения к Git и Kubernetes API и держать кэш UI/состояния. Не хранит желаемое состояние и не является БД истины: её можно пересобрать.
+- **Развёртывание:** ставится вместе с Argo CD как зависимость поставки, но это отдельное ПО (кэш), не процесс `argocd-*`. HA Redis сам по себе не делает HA всего Argo CD.
+
+#### DEX — Dex
+
+- **Что это:** опциональный identity broker.
+- **Технологии и варианты:** Dex из стандартных манифестов Argo CD; коннекторы к внешним IdP. Не нужен, если `argocd-server` ходит в OIDC напрямую. Несколько реплик Dex могут расходиться: у него in-memory состояние. ([user management](https://argo-cd.readthedocs.io/en/stable/operator-manual/user-management/), [HA](https://argo-cd.readthedocs.io/en/stable/operator-manual/high_availability/))
+- **Назначение:** связать UI/API с корпоративным IdP.
+- **Развёртывание:** входит в поставку Argo CD отдельным Deployment; использование опционально.
+
+#### NOTIFY — notifications-controller
+
+- **Что это:** контроллер уведомлений.
+- **Технологии и варианты:** Notifications controller из поставки Argo CD; templates/triggers и внешний канал (почта, chat, webhook).
+- **Назначение:** наблюдать Application/AppProject и отправлять события наружу. В reconciliation и sync не участвует.
+- **Развёртывание:** входит в поставку; использование опционально.
+
+#### COMMIT — commit-server
+
+- **Что это:** внутренний gRPC-сервис Source Hydrator.
+- **Технологии и варианты:** `argocd-commit-server`; в Argo CD 3.5 функция **beta** и выключена по умолчанию. ([Source Hydrator](https://argo-cd.readthedocs.io/en/stable/user-guide/source-hydrator/))
+- **Назначение:** принять уже сгенерированные манифесты и сделать Git push в настроенную ветку.
+- **Развёртывание:** входит в поставку отдельным сервисом; для обычного pull-based GitOps не нужен. Требует write credentials к Git.
+
+#### K8S — Kubernetes API + etcd
+
+- **Что это:** control plane управляемого кластера этой площадки.
+- **Технологии и варианты:** kube-apiserver и etcd выбранного дистрибутива Kubernetes; порт API — фактический URL кластера, часто **443** или **6443**.
+- **Назначение:** хранить CRD/CR `Application`, `AppProject`, `ApplicationSet`, Secrets репозиториев/кластеров и live-объекты. Сюда controller читает состояние и применяет манифесты.
+- **Развёртывание:** отдельно развёрнутая платформа. Argo CD не резервирует и не восстанавливает etcd.
+
+#### WORK — workloads площадки
+
+- **Что это:** управляемые приложения и прочие Kubernetes-объекты этой площадки.
+- **Технологии и варианты:** Deployment, StatefulSet, Service и соседние системы как workload (Kafka, Camunda, БД) — не внутренние части Argo CD.
+- **Назначение:** исполнять полезную нагрузку, которую Argo CD приводит к Git.
+- **Развёртывание:** отдельные приложения в том же кластере. Потеря Argo CD не должна их останавливать.
+
+#### Рамки SITE / EXT и блоки легенды
+
+- **Что это:** группировка и пояснение цветов, не runtime-процессы.
+- **Технологии и варианты:** служебные блоки Mermaid; заливки у рамок нет, чтобы не перекрашивать квадратики.
+- **Назначение:** отделить экземпляр на площадке 1 от внешних систем; легенда повторяет цвета узлов.
+- **Развёртывание:** на схему не ставятся.
 
 ### Как читать схему
 
-1. **Сначала определите границы экземпляров.** Внутри `INST-A`, `INST-B`, `INST-C` находятся компоненты трёх независимых Argo CD. Kubernetes API нарисован снаружи этих границ, потому что Argo CD использует Kubernetes, но не является его control plane.
-2. **Читайте основной путь по номерам от 1 до 9.** Разработчик инициирует изменение через merge request; CI проверяет артефакт и фиксирует новую версию в Git; Argo CD затем получает желаемое состояние и применяет его. CI и Argo CD не должны одновременно владеть одними ресурсами.
-3. **Шаги 1–2 относятся к CI, а не к Argo CD.** Argo CD не компилирует код и не строит контейнер. Результатом CI должен быть неизменяемый образ и проверяемое изменение Git.
-4. **Шаг 3 — административный поток.** Пользователь работает с `argocd-server` через UI или CLI. Для production endpoint публикуется через контролируемый Ingress/Load Balancer с TLS; `kubectl port-forward` подходит только для закрытого стенда или диагностики.
-5. **Шаг 4 пунктирный, потому что webhook необязателен.** Webhook лишь ускоряет refresh. Даже без него application-controller периодически выполняет reconciliation. Webhook endpoint следует защищать secret, иначе публичные запросы могут создавать лишнюю нагрузку.
-6. **Шаги 5–6 превращают Git-источник в манифесты.** Controller передаёт repo-server ссылку, revision, path и параметры. Repo-server получает содержимое Git и запускает Helm/Kustomize/Jsonnet или разрешённый plugin как генератор, но сам не применяет результат в кластер.
-7. **Шаг 7 объединяет чтение и изменение Kubernetes.** Controller читает live state, строит diff и при ручной либо разрешённой автоматической синхронизации вызывает Kubernetes API. `prune` и `selfHeal` — независимые настройки; они не включаются самим фактом включения GitOps.
-8. **Стрелка `APPSET → K8S API` означает создание CR, а не workload напрямую.** ApplicationSet controller создаёт объекты `Application`; application-controller уже обрабатывает их и управляет целевыми ресурсами.
-9. **Связи с Redis внутренние.** Потеря кэша ухудшает работу control plane до восстановления, но Git и Kubernetes/etcd остаются источниками истины. В Redis нельзя полагаться на долговременное хранение конфигурации или бизнес-данных.
-10. **SSO имеет два допустимых варианта.** На схеме показан Dex как broker. Если корпоративный IdP поддерживает подходящий OIDC, `argocd-server` может обращаться к нему напрямую, и блок Dex отсутствует.
-11. **Доставка секретов вынесена в отдельный поток 8.** Argo CD может синхронизировать ссылки, зашифрованные документы или CR внешнего оператора, но не делает открытый Kubernetes Secret в Git безопасным. Выбор Vault/External Secrets, SOPS или Sealed Secrets является отдельным архитектурным решением.
-12. **Мониторинг в шаге 9 наблюдает, но не управляет.** Prometheus читает `/metrics`; он не участвует в sync. Для полной картины собирают метрики всех включённых компонентов, а не только `argocd-server`.
-13. **Notifications и Source Hydrator показаны пунктиром.** Они не нужны базовой доставке. Notifications отправляет события наружу. Source Hydrator, напротив обычного read-only pull-потока, требует commit-server и контролируемого write-доступа в Git.
-14. **Три площадки используют общий Git, но не общее runtime-состояние Argo CD.** Один commit может быть источником для всех экземпляров, однако продвижение по средам следует разделять ветками, каталогами, тегами или pull request-процессом так, чтобы ошибка не синхронизировалась во все площадки без контроля.
-15. **Потеря одного экземпляра не должна останавливать workload.** Она прекращает для его площадки новые sync, refresh и self-heal, но уже созданные Kubernetes-объекты продолжают исполняться. Потеря Kubernetes control plane или зависимостей самого приложения имеет другие последствия и Argo CD их не устраняет.
-16. **Центральный multi-cluster вариант меняет стрелки.** Тогда `A-CTRL`, например, обращается также к `EXT-K8S-B/C` через межплощадочную сеть, а credentials удалённых кластеров хранятся как Secrets в namespace Argo CD. Это увеличивает общий blast radius и не принимается без измерений RTT и требований доступности.
+1. **Это одна площадка.** В рамке `Площадка 1` — один Kubernetes-кластер и один экземпляр Argo CD. Второго и третьего ЦОДа на рисунке нет: их появление потребовало бы отдельных экземпляров или явно принятого multi-cluster с измеренным RTT, а не растягивания этого control plane.
+2. **Сначала смотрите на цвет квадратика, не на рамку.** Зелёный — ядро Argo CD. Жёлтый пунктир — тот же продукт, но его можно не включать. Синий — чужой жизненный цикл (Git, CI, IdP, Ingress, Kubernetes, Prometheus, секреты, канал уведомлений, workload). Розовый цилиндр — Redis: ставится с продуктом, но это кэш другого ПО. Рамки `SITE` и `EXT` специально без заливки, чтобы не перекрашивать узлы.
+3. **Читайте основной путь по номерам 1–9.** Человек инициирует изменение; CI проверяет артефакт и пишет Git; Argo CD читает Git и применяет его к Kubernetes. CI и Argo CD не должны одновременно владеть одними ресурсами.
+4. **Шаги 1–2 — это CI, не Argo CD.** Argo CD не компилирует код и не собирает контейнер. На выходе CI должны быть неизменяемый образ (digest или фиксированный tag) и проверяемый commit в GitOps-репозитории.
+5. **Шаг 3 — вход человека.** Пользователь не ходит в controller и не ходит в Git «вместо Argo CD». Он приходит на `ING`, тот отдаёт трафик `argocd-server`. Боевой вход — контролируемый Ingress/LB с TLS; `kubectl port-forward` только для закрытого стенда.
+6. **Шаг 4 пунктирный, потому что webhook необязателен.** Он только ускоряет refresh. Даже без него application-controller периодически делает reconciliation. Endpoint webhook нужно защищать secret, иначе посторонние вызовы создают лишнюю нагрузку.
+7. **Шаги 5–6 превращают Git в манифесты.** Controller передаёт repo-server ссылку, revision, path и параметры. Repo-server клонирует источник и запускает Helm, Kustomize, Jsonnet или разрешённый plugin. Результат он не применяет в кластер.
+8. **Шаг 7 — единственное место, где кластер меняют.** Controller читает live state из Kubernetes API, строит diff и при ручном либо явно разрешённом auto-sync вызывает apply. `prune` (удалить пропавшее из Git) и `selfHeal` (вернуть ручной drift) включают отдельно; GitOps сам по себе их не включает. ([auto sync](https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/))
+9. **Стрелка `APPSET → K8S` создаёт CR, а не workload.** ApplicationSet пишет объекты `Application`. Их уже обрабатывает `CTRL` и уже он управляет `WORK`.
+10. **Стрелки к Redis внутренние.** Потеря кэша ухудшает UI и reconciliation до пересборки кэша, но Git и etcd остаются источниками истины. Конфигурацию и бизнес-данные в Redis не кладут.
+11. **SSO на схеме показан через Dex.** Это один вариант. Если IdP отдаёт подходящий OIDC, `API` может ходить в `IDP` напрямую, и жёлтый `DEX` отсутствует.
+12. **Поток 8 — не часть ядра Argo CD.** Секреты доставляет выбранный внешний механизм в Kubernetes API. Открытый Kubernetes Secret в Git от этого не становится допустимым.
+13. **Поток 9 только наблюдает.** Prometheus снимает `/metrics` с включённых компонентов. Он не синхронизирует приложения. Для картины нужны метрики controller и repo-server, не только UI.
+14. **Жёлтые `NOTIFY` и `COMMIT` не нужны базовой доставке.** Notifications шлёт события в `MSG`. Source Hydrator, в отличие от обычного read-only pull, требует write в Git и в 3.5 имеет статус beta.
+15. **Потеря Argo CD не равна потере приложений.** Исчезает возможность новых sync, refresh и self-heal на этой площадке. Уже созданные объекты в `WORK` продолжают исполняться, пока живы Kubernetes и зависимости самих приложений. Откат Git-манифеста не откатывает данные БД.
+16. **Эту схему нельзя читать как multi-cluster.** Если позже появится один Argo CD на несколько кластеров, `CTRL` начнёт ходить к чужим Kubernetes API через межплощадочную сеть, а credentials удалённых кластеров окажутся Secrets в namespace Argo CD. Это другой blast radius и отдельное решение, не «дорисованные квадратики B и C».
 
 ### Специальные термины
 

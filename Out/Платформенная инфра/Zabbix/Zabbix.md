@@ -61,40 +61,24 @@ Zabbix не создаёт многопишущий кластер наподо�
 
 ### Схема инстансов и потоков
 
-На схеме показана принятая логическая топология для трёх площадок. Имена внутри блоков — имена ролей/инстансов, а не обязательные DNS-имена. Группы proxy и Agent 2 опциональны для Zabbix как продукта, но нужны там, где выбран соответствующий способ сбора.
+**Допущение:** одна площадка. Мозг (native HA server + PostgreSQL) и наблюдаемые хосты живут в одном дата-центре. Stretch server и синхронный Postgres на 2–3 зала на этой схеме **нет**: порога RTT у вендора нет ([HA](https://www.zabbix.com/documentation/7.0/en/manual/concepts/server/ha)).
+
+Имена внутри блоков — роли/инстансы, не обязательные DNS-имена. Сплошная стрелка — рабочий поток; пунктир — опциональный путь или нерабочий standby. Направление стрелки — кто открывает соединение.
+
+**Сильная сторона:** агенты ходят к server напрямую, сеть короче, HA остаётся внутри одного зала. **Слабая:** нет буфера «чужого зала»; падение площадки вместе с writer Postgres останавливает обработку. **Критично:** TCP **10051** не балансировать на ACTIVE и STANDBY сразу; UI и 10051 не публиковать в интернет.
 
 ```mermaid
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#d9ead3", "primaryTextColor": "#000000", "primaryBorderColor": "#38761d", "lineColor": "#5b5b5b", "secondaryColor": "#cfe2f3", "tertiaryColor": "#fff2cc"}}}%%
 flowchart LR
-  subgraph dc1["Площадка 1 — наблюдаемые системы"]
-    host1["host-dc1-01<br/>наблюдаемая ОС"]
-    agent1["zabbix-agent2-dc1-host01"]
-    dev1["net-dc1<br/>SNMP-устройства"]
-    api1["api-dc1<br/>HTTP endpoint"]
-    p1a["zabbix-proxy-dc1-a<br/>active proxy"]
-    p1b["zabbix-proxy-dc1-b<br/>active proxy"]
-    pdb1a[("proxy-db-dc1-a<br/>SQLite или PostgreSQL")]
-    pdb1b[("proxy-db-dc1-b<br/>SQLite или PostgreSQL")]
+  subgraph obs["Наблюдаемые системы — внешние"]
+    host1["host-01<br/>наблюдаемая ОС"]
+    agent1["zabbix-agent2-host01"]
+    snmp1["net-snmp<br/>SNMP-устройства"]
+    api1["api-endpoint<br/>HTTP"]
+    jvm1["jvm-app<br/>JMX endpoint"]
   end
 
-  subgraph dc2["Площадка 2 — наблюдаемые системы"]
-    host2["host-dc2-01<br/>наблюдаемая ОС"]
-    agent2["zabbix-agent2-dc2-host01"]
-    p2a["zabbix-proxy-dc2-a<br/>active proxy"]
-    p2b["zabbix-proxy-dc2-b<br/>active proxy"]
-    pdb2a[("proxy-db-dc2-a")]
-    pdb2b[("proxy-db-dc2-b")]
-  end
-
-  subgraph dc3["Площадка 3 — наблюдаемые системы"]
-    host3["host-dc3-01<br/>наблюдаемая ОС"]
-    agent3["zabbix-agent2-dc3-host01"]
-    p3a["zabbix-proxy-dc3-a<br/>active proxy"]
-    p3b["zabbix-proxy-dc3-b<br/>active proxy"]
-    pdb3a[("proxy-db-dc3-a")]
-    pdb3b[("proxy-db-dc3-b")]
-  end
-
-  subgraph core["Центральный контур Zabbix"]
+  subgraph core["Контур Zabbix — площадка 1"]
     srv1["zabbix-server-01<br/>ACTIVE"]
     srv2["zabbix-server-02<br/>STANDBY"]
     fe1["zabbix-web-01<br/>PHP frontend / API"]
@@ -102,45 +86,31 @@ flowchart LR
     jg["zabbix-java-gateway-01<br/>опционально"]
     ws["zabbix-web-service-01<br/>PDF, опционально"]
     kc["zabbix-kafka-connector-01<br/>опционально"]
+    pxy["zabbix-proxy-01<br/>active proxy, опционально"]
+    pdb1[("proxy-db-01<br/>SQLite или PostgreSQL")]
   end
 
-  lb["web-lb-01<br/>внешний балансировщик"]
-  db[("zabbix-db<br/>PostgreSQL<br/>отдельный контур")]
-  vault["vault<br/>внешнее хранилище секретов"]
-  alert["mail / webhook<br/>внешний канал оповещений"]
-  kafka["Kafka<br/>внешняя шина"]
-  user["Браузер / API-клиент"]
-  jvm["JVM-приложение<br/>JMX endpoint"]
+  subgraph ext["Отдельно развёрнутые системы"]
+    lb["web-lb-01<br/>внешний балансировщик"]
+    db[("zabbix-db<br/>PostgreSQL 13–18")]
+    vault["vault<br/>хранилище секретов"]
+    alert["mail / webhook<br/>канал оповещений"]
+    kafka["Kafka<br/>шина событий"]
+  end
 
-  p1a --- pdb1a
-  p1b --- pdb1b
-  p2a --- pdb2a
-  p2b --- pdb2b
-  p3a --- pdb3a
-  p3b --- pdb3b
+  user["Браузер / API-клиент"]
 
   agent1 ---|"установлен на"| host1
-  agent2 ---|"установлен на"| host2
-  agent3 ---|"установлен на"| host3
-  p1a -->|"пассивная проверка: TCP 10050"| agent1
-  agent1 -->|"активная проверка: TCP 10051"| p1a
-  p1a -->|"SNMP polling: UDP 161"| dev1
-  dev1 -->|"SNMP trap: UDP 162"| p1a
-  p1a -->|"HTTP(S): 80/443"| api1
-  p2a -->|"TCP 10050"| agent2
-  agent2 -->|"TCP 10051"| p2a
-  p3a -->|"TCP 10050"| agent3
-  agent3 -->|"TCP 10051"| p3a
+  srv1 -->|"пассивная проверка: TCP 10050"| agent1
+  agent1 -->|"активная проверка: TCP 10051"| srv1
+  srv1 -->|"SNMP polling: UDP 161"| snmp1
+  snmp1 -->|"SNMP trap: UDP 162"| srv1
+  srv1 -->|"HTTP(S): 80/443"| api1
 
-  p1a <-->|"TCP 10051 TLS<br/>соединение открывает proxy"| srv1
-  p1b <-->|"TCP 10051 TLS"| srv1
-  p2a <-->|"TCP 10051 TLS"| srv1
-  p2b <-->|"TCP 10051 TLS"| srv1
-  p3a <-->|"TCP 10051 TLS"| srv1
-  p3b <-->|"TCP 10051 TLS"| srv1
-  p1a -. "после переключения active" .-> srv2
-  p2a -. "после переключения active" .-> srv2
-  p3a -. "после переключения active" .-> srv2
+  pxy --- pdb1
+  pxy -.->|"альтернатива: TCP 10050"| agent1
+  agent1 -.->|"альтернатива: TCP 10051"| pxy
+  pxy -.->|"TCP 10051 TLS<br/>соединение открывает proxy"| srv1
 
   srv1 -->|"SQL: TCP 5432"| db
   srv2 -.->|"HA manager: SQL / TCP 5432"| db
@@ -154,9 +124,9 @@ flowchart LR
   lb -->|"HTTP(S), порт развёртывания"| fe2
 
   srv1 -->|"JMX-запрос: TCP 10052"| jg
-  jg -->|"JMX, настроенный порт"| jvm
+  jg -->|"JMX, настроенный порт"| jvm1
   srv1 -->|"TCP 10053"| ws
-  ws -->|"открывает страницу отчёта: HTTPS 443"| lb
+  ws -->|"страница отчёта: HTTPS 443"| lb
   srv1 -->|"HTTP(S), NDJSON"| kc
   kc -->|"Kafka protocol: 9092/9093*"| kafka
   srv1 -->|"SMTP или HTTPS webhook"| alert
@@ -167,33 +137,64 @@ flowchart LR
   extLegend["Внешняя система / отдельное ПО"]
   dataLegend[("Отдельное хранилище данных")]
 
-  classDef zbx fill:#d9ead3,stroke:#38761d,color:#000,stroke-width:2px;
-  classDef optional fill:#fff2cc,stroke:#bf9000,color:#000,stroke-width:2px,stroke-dasharray:5 3;
-  classDef external fill:#cfe2f3,stroke:#0b5394,color:#000,stroke-width:2px;
-  classDef datastore fill:#ead1dc,stroke:#741b47,color:#000,stroke-width:2px;
+  style srv1 fill:#d9ead3,stroke:#38761d,color:#000000,stroke-width:2px
+  style srv2 fill:#d9ead3,stroke:#38761d,color:#000000,stroke-width:2px
+  style fe1 fill:#d9ead3,stroke:#38761d,color:#000000,stroke-width:2px
+  style fe2 fill:#d9ead3,stroke:#38761d,color:#000000,stroke-width:2px
+  style zbxLegend fill:#d9ead3,stroke:#38761d,color:#000000,stroke-width:2px
 
-  class srv1,srv2,fe1,fe2,zbxLegend zbx;
-  class p1a,p1b,p2a,p2b,p3a,p3b,agent1,agent2,agent3,jg,ws,kc,optLegend optional;
-  class host1,host2,host3,dev1,api1,lb,vault,alert,kafka,user,jvm,extLegend external;
-  class db,pdb1a,pdb1b,pdb2a,pdb2b,pdb3a,pdb3b,dataLegend datastore;
+  style agent1 fill:#fff2cc,stroke:#bf9000,color:#000000,stroke-width:2px,stroke-dasharray:5 3
+  style pxy fill:#fff2cc,stroke:#bf9000,color:#000000,stroke-width:2px,stroke-dasharray:5 3
+  style jg fill:#fff2cc,stroke:#bf9000,color:#000000,stroke-width:2px,stroke-dasharray:5 3
+  style ws fill:#fff2cc,stroke:#bf9000,color:#000000,stroke-width:2px,stroke-dasharray:5 3
+  style kc fill:#fff2cc,stroke:#bf9000,color:#000000,stroke-width:2px,stroke-dasharray:5 3
+  style optLegend fill:#fff2cc,stroke:#bf9000,color:#000000,stroke-width:2px,stroke-dasharray:5 3
+
+  style host1 fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style snmp1 fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style api1 fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style jvm1 fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style lb fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style vault fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style alert fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style kafka fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style user fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style extLegend fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+
+  style db fill:#ead1dc,stroke:#741b47,color:#000000,stroke-width:2px
+  style pdb1 fill:#ead1dc,stroke:#741b47,color:#000000,stroke-width:2px
+  style dataLegend fill:#ead1dc,stroke:#741b47,color:#000000,stroke-width:2px
 ```
 
-\* `9092/9093` — распространённые порты Kafka, но фактические адреса и TLS-порт задаются конфигурацией конкретного кластера; это не порты Zabbix.
+\* `9092/9093` — частые listeners Kafka; фактический адрес и TLS задаёт кластер Kafka, это не порты Zabbix. Порты Zabbix по умолчанию: [requirements](https://www.zabbix.com/documentation/7.0/en/manual/installation/requirements).
 
-### Как читать потоки
+**Легенда:**
 
-1. **Сплошная стрелка показывает рабочее сетевое соединение.** Направление стрелки — кто начинает запрос. Две стрелки на одной линии означают обмен в обе стороны внутри соединения.
-2. **Пунктир к standby не является рабочим параллельным потоком.** Пока `zabbix-server-02` в состоянии STANDBY, он запускает только HA manager, не выполняет проверки и не слушает рабочие порты. Proxy сможет обратиться к нему только после того, как эта нода станет ACTIVE.
-3. **Пассивная проверка Agent 2:** proxy или server открывает соединение к Agent 2 на **TCP 10050**, запрашивает ключ и получает ответ.
-4. **Активная проверка Agent 2:** Agent 2 сам открывает соединение к proxy или server на **TCP 10051**, получает список проверок и отправляет значения. Слова «активный» и «пассивный» здесь описывают инициатора соединения, а не важность агента.
-5. **Active proxy** сам соединяется с активной server-нодой на **TCP 10051**: запрашивает конфигурацию и передаёт накопленные данные. Для passive proxy стрелка была бы направлена от server к proxy на тот же порт.
-6. **Локальная база каждого proxy** хранит его конфигурацию и буфер. Она не является частью `zabbix-db` и не может быть общей с server.
-7. **Server и frontend обращаются к одной Zabbix DB.** Активный server записывает историю, события и состояние HA. Standby через ту же БД видит состояние кластера. Frontend читает конфигурацию и историю напрямую из БД.
-8. **Frontend в режиме HA** читает активную ноду из таблицы `nodes` и использует её `NodeAddress`. Поэтому линия `frontend → server` ведёт к текущей ACTIVE-ноде, а не через TCP-балансировщик на обе server-ноды.
-9. **Пользовательский поток отделён от сбора:** браузер идёт через внешний балансировщик к одной из копий PHP frontend. Отказ frontend мешает просмотру, но сам по себе не останавливает сбор server/proxy.
-10. **JMX и PDF — отдельные опциональные ветви.** Server или proxy обращается к Java gateway на 10052; server обращается к web service на 10053, а web service открывает страницу frontend для рендеринга отчёта.
-11. **Kafka connector — приёмник HTTP-потока Zabbix, а не часть Kafka.** Server отправляет ему значения/события в NDJSON по HTTP(S), затем коннектор публикует их в Kafka.
-12. **Внешние блоки окрашены синим.** Их жизненный цикл, отказоустойчивость и резервное копирование не обеспечивает native HA Zabbix.
+- <span style="color:#38761d">■</span> **Зелёный** — процессы Zabbix, без которых принятый контур server/frontend не работает.
+- <span style="color:#bf9000">■</span> **Жёлтый, пунктирная рамка** — компоненты поставки Zabbix, которые на одной площадке не обязательны (Agent 2, proxy, Java gateway, PDF, Kafka connector).
+- <span style="color:#0b5394">■</span> **Синий** — отдельно развёрнутые системы и наблюдаемые цели. Native HA Zabbix их не кластеризует.
+- <span style="color:#741b47">■</span> **Розовый цилиндр** — хранилище данных, которое не является процессом `zabbix_server`.
+
+### Как читать схему
+
+1. **Всё, кроме браузера оператора, нарисовано в одной площадке.** Второй и третий дата-центр сюда не входят: для них потребовались бы proxy в чужом зале, а не второй writer server.
+2. **Цвет блока важнее рамки subgraph.** Зелёный — продукт. Жёлтый — тот же продукт, но его можно не ставить. Синий и розовый — чужой жизненный цикл (СУБД, брокер, балансировщик, наблюдаемый хост).
+3. **Стрелка читается как «кто звонит».** `zabbix-server-01 → zabbix-agent2-host01` значит: server открывает TCP **10050** к агенту. Обратная сплошная стрелка — другой режим: агент сам открывает **10051**.
+4. **Основной съём на одной площадке — напрямую на ACTIVE server.** Хост, SNMP-устройство и HTTP endpoint не обязаны ходить через proxy. Proxy на схеме жёлтый и пунктирный: это **альтернативное назначение хоста**, не второй параллельный съём того же item.
+5. **Пассивная проверка Agent 2:** server (или proxy, если хост отдан proxy) соединяется с агентом на **10050**, запрашивает ключ item и забирает значение. ([active/passive](https://www.zabbix.com/documentation/7.0/en/manual/appendix/items/activepassive))
+6. **Активная проверка Agent 2:** агент сам соединяется на **10051**, получает список проверок и отправляет значения. Слова «активный/пассивный» говорят, кто начал TCP-сессию, а не насколько агент важен.
+7. **SNMP и HTTP — agentless.** Server сам опрашивает устройство по UDP **161** или HTTP(S). Trap (сообщение от устройства) приходит на UDP **162**, обычно через `snmptrapd` рядом с server; это не порт процесса `zabbix_server` из таблицы вендора.
+8. **Опциональный active proxy** сам открывает TLS на **10051** к текущей ACTIVE-ноде, забирает конфигурацию и отдаёт буфер. У каждого proxy своя база (`proxy-db-01`): SQLite-файл или отдельный PostgreSQL/MySQL. Её нельзя совместить с `zabbix-db`. ([proxy](https://www.zabbix.com/documentation/7.0/en/manual/concepts/proxy))
+9. **STANDBY не параллельный сборщик.** `zabbix-server-02` держит только HA manager и смотрит пульс в той же PostgreSQL. Он **не слушает** рабочие порты и не принимает агентов. После переключения те же стрелки съёма ведут уже к нему как к новой ACTIVE; отдельная «линия на будущее» на схеме не рисуется. ([HA](https://www.zabbix.com/documentation/7.0/en/manual/concepts/server/ha))
+10. **Frontend не ходит в server за историей.** PHP читает конфигурацию, историю и таблицу `nodes` из `zabbix-db`. К server на **10051** frontend обращается только чтобы узнать, что ACTIVE жив, по `NodeAddress`. В `zabbix.conf.php` адрес:порт server при HA **не** зашивают — иначе UI останется на мёртвой ноде.
+11. **Балансировщик — только для людей и API, не для 10051.** `web-lb-01` распределяет HTTPS между копиями frontend. Поставить его TCP-балансировщиком на ACTIVE+STANDBY ломает модель: standby порт не слушает.
+12. **Отказ UI не останавливает съём.** Упал frontend или балансировщик — оператор не видит экран; ACTIVE server при живой БД продолжает проверки, триггеры и действия.
+13. **JMX — отдельная жёлтая ветка.** Server спрашивает Java gateway на **10052**; gateway говорит с JVM по настроенному JMX-порту. Без Java-приложений этот квадрат не ставят.
+14. **PDF — тоже отдельная ветка.** Server зовёт web service на **10053**; тот открывает страницу frontend (через LB) и печатает отчёт. Это не путь сбора метрик.
+15. **Kafka connector — не брокер и не часть server.** Server шлёт ему NDJSON по HTTP(S); коннектор уже публикует в внешнюю Kafka. Падение Zabbix шину Kafka не роняет; отсутствие коннектора штатный мониторинг не ломает. ([streaming](https://www.zabbix.com/documentation/7.0/en/manual/config/export/streaming))
+16. **Vault и почта/webhook — исходящие вызовы ACTIVE server.** Секреты макросов читаются из внешнего хранилища; проблема уходит дежурному по SMTP или HTTPS webhook. Их доступность native HA не обеспечивает.
+
+Термины схемы вынесены в глоссарий в конце документа.
 
 ### Zabbix server: активная нода
 
@@ -209,31 +210,31 @@ flowchart LR
 - **Назначение:** следить за состоянием native HA через общую БД и принять роль ACTIVE при переключении.
 - **Технологии и варианты:** тот же бинарь и версия, что у активной ноды; задаются уникальный `HANodeName` и доступный `NodeAddress`.
 - **Принадлежность:** входит в Zabbix.
-- **Обязательность:** опциональна для одиночной установки, обязательна только если нужен native HA server. Standby не делит нагрузку и не слушает рабочие порты.
+- **Обязательность:** в продукте native HA — opt-in (`HANodeName`). На принятой схеме площадки standby показан как часть контура. Он не делит нагрузку и до переключения не слушает рабочие порты.
 
 ### Zabbix proxy
 
-- **Экземпляры на схеме:** пары `zabbix-proxy-dcN-a/b` на каждой площадке.
-- **Назначение:** выполнять проверки рядом с целями, локально буферизовать результаты и передавать их server. Группа proxy позволяет перераспределить хосты при отказе одного участника.
-- **Технологии и варианты:** `zabbix_proxy` в active- или passive-режиме; официальные контейнеры/пакеты с SQLite, PostgreSQL или MySQL. На схеме выбран active proxy.
+- **Экземпляр на схеме:** `zabbix-proxy-01`.
+- **Назначение:** выполнять проверки рядом с целями, локально буферизовать результаты и передавать их server. На одной площадке это способ разгрузить ACTIVE server или пережить короткий обрыв до него, а не замена второго дата-центра.
+- **Технологии и варианты:** процесс `zabbix_proxy` в active- или passive-режиме; официальные контейнеры/пакеты `zabbix-proxy-sqlite3` / `zabbix-proxy-pgsql` (есть и вариант с MySQL). На схеме выбран active proxy: соединение к server на TCP **10051** открывает сам proxy. Версия proxy должна совпадать с server (**7.0.30**).
 - **Принадлежность:** входит в Zabbix.
-- **Обязательность:** опционален для продукта; нужен для распределённого сбора, локального буфера и принятой многоплощадочной топологии. Версия proxy должна соответствовать версии server.
+- **Обязательность:** опционален. На одной площадке хосты могут быть назначены напрямую ACTIVE server. Группа из нескольких proxy — отдельное решение, на схеме не нарисована.
 
 ### Локальная база proxy
 
-- **Экземпляры на схеме:** `proxy-db-dcN-a/b`, отдельная база для каждого proxy.
+- **Экземпляр на схеме:** `proxy-db-01`, отдельная база этого proxy.
 - **Назначение:** хранить локальную конфигурацию proxy и очередь данных до отправки server.
-- **Технологии и варианты:** встроенный файл SQLite либо отдельно запущенные PostgreSQL/MySQL. SQLite в памяти не используется.
-- **Принадлежность:** хранилище обслуживает proxy, но выбранная СУБД является отдельным ПО; SQLite поставляется как библиотечная зависимость варианта proxy.
-- **Обязательность:** обязательна для каждого proxy. Базу proxy нельзя совмещать с Zabbix DB server.
+- **Технологии и варианты:** встроенный файл SQLite либо отдельно запущенные PostgreSQL/MySQL. SQLite in-memory вендор для боя не предлагает.
+- **Принадлежность:** хранилище обслуживает proxy; выбранная СУБД — отдельное ПО, SQLite — библиотечная зависимость варианта proxy.
+- **Обязательность:** обязательна, **если** proxy включён. Базу proxy нельзя совмещать с `zabbix-db`.
 
 ### Zabbix Agent 2
 
-- **Экземпляры на схеме:** `zabbix-agent2-dcN-host01`, установленные на внешних `host-dcN-01`.
-- **Назначение:** получать метрики ОС и приложений через плагины и отдавать их в passive- или active-режиме.
-- **Технологии и варианты:** `zabbix_agent2` для Linux и Windows; классический `zabbix_agentd` остаётся альтернативой, но Agent 2 предпочтителен для новых интеграций.
-- **Принадлежность:** входит в Zabbix, хотя устанавливается на наблюдаемую машину.
-- **Обязательность:** опционален: хост можно наблюдать по SNMP, HTTP, ICMP или agentless-проверками.
+- **Экземпляр на схеме:** `zabbix-agent2-host01`, установлен на внешнем `host-01`.
+- **Назначение:** читать метрики ОС и приложений через плагины и отдавать их в passive-режиме (server/proxy стучится на **10050**) или active-режиме (агент сам идёт на **10051**).
+- **Технологии и варианты:** `zabbix_agent2` для Linux и Windows; классический `zabbix_agentd` остаётся альтернативой, для новых интеграций предпочтителен Agent 2. Официальный образ `zabbix/zabbix-agent2`, метка **7.0.30**.
+- **Принадлежность:** входит в Zabbix, хотя ставится на чужую машину.
+- **Обязательность:** опционален: хост можно наблюдать по SNMP, HTTP, ICMP или другим agentless-проверкам.
 
 ### Zabbix frontend и API
 
@@ -247,7 +248,7 @@ flowchart LR
 
 - **Экземпляр на схеме:** логическая точка `zabbix-db`.
 - **Назначение:** хранить конфигурацию, историю, trends, события, проблемы и таблицу состояния HA server.
-- **Технологии и варианты:** в принятой схеме PostgreSQL **13–18**; опционально TimescaleDB Community для партиционирования и сжатия истории. Zabbix также поддерживает другие СУБД, но они не показаны.
+- **Технологии и варианты:** в принятой схеме PostgreSQL **13–18** ([requirements](https://www.zabbix.com/documentation/7.0/en/manual/installation/requirements)); опционально TimescaleDB Community для партиционирования и сжатия истории. Вендор также поддерживает MySQL/Percona, MariaDB и Oracle (Oracle deprecated с 7.0); на схеме они не показаны.
 - **Принадлежность:** PostgreSQL и TimescaleDB — отдельное ПО, не процессы Zabbix.
 - **Обязательность:** постоянная БД обязательна. Native HA server не создаёт HA базы и не заменяет её резервирование.
 
@@ -293,11 +294,11 @@ flowchart LR
 
 ### Наблюдаемые системы
 
-- **Экземпляры на схеме:** хосты, SNMP-устройства, HTTP API и JVM-приложение.
-- **Назначение:** источники метрик либо цели проверок.
+- **Экземпляры на схеме:** `host-01`, `net-snmp`, `api-endpoint`, `jvm-app`.
+- **Назначение:** источники метрик либо цели проверок на этой же площадке.
 - **Технологии и варианты:** Agent 2, SNMP, ICMP, HTTP(S), JMX и другие поддерживаемые типы item.
 - **Принадлежность:** сами системы внешние; установленный на хост Agent 2 относится к Zabbix.
-- **Обязательность:** должна быть хотя бы одна цель наблюдения, но конкретный протокол и агент опциональны.
+- **Обязательность:** нужна хотя бы одна цель наблюдения; конкретный протокол и агент опциональны.
 
 ### Каналы оповещений
 
@@ -314,6 +315,14 @@ flowchart LR
 - **Технологии и варианты:** Apache Kafka с настроенными bootstrap servers и принятой в платформе схемой защиты.
 - **Принадлежность:** внешняя система; Zabbix не является брокером.
 - **Обязательность:** опциональна и не влияет на основной цикл мониторинга.
+
+### Браузер / API-клиент
+
+- **Экземпляр на схеме:** `Браузер / API-клиент`.
+- **Назначение:** человек или автоматизация, которые открывают UI и HTTP API.
+- **Технологии и варианты:** браузер из [списка вендора](https://www.zabbix.com/documentation/7.0/en/manual/installation/requirements) или HTTP-клиент к JSON-RPC API frontend.
+- **Принадлежность:** внешний участник, не часть поставки Zabbix.
+- **Обязательность:** без него система может собирать данные, но оператор экран не видит.
 
 ---
 

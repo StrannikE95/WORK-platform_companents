@@ -57,194 +57,281 @@ S3 API включаете middleware `s3api` на **тех же** proxy. Это 
 
 ## Основные элементы системы и зависимости
 
-Swift — одно программное решение из нескольких специализированных сервисов. Proxy, account, container и object services нельзя считать взаимозаменяемыми: у них разные данные и роли. Keystone, балансировщик, Memcached, клиенты и система метрик — отдельные внешние системы.
+Swift — одно программное решение из нескольких специализированных сервисов. Proxy, account, container и object services нельзя считать взаимозаменяемыми: у них разные данные и роли. Keystone, балансировщик, Memcached, rsync, клиенты и система метрик — отдельные внешние системы. ([Архитектура](https://docs.openstack.org/swift/2026.1/overview_architecture.html), [Deployment Guide](https://docs.openstack.org/swift/2026.1/deployment_guide.html))
+
+**Допущение схемы:** одна площадка, один region, один живой кластер Swift **2.37.3**. Storage-ноды, proxy, Keystone и Memcached этой установки живут в одном дата-центре. Stretch одного кольца на 2–3 зала и Global Cluster на схеме **нет**: порога допустимого RTT у проекта нет, заводской ориентир — один region с низкой задержкой. ([Global Clusters](https://docs.openstack.org/swift/2026.1/overview_global_cluster.html))
+
+**Сильная сторона** одного зала: PUT/GET и rsync не едут через город, blast radius кольца = эта площадка, сразу после записи объект обычно читается с локальных копий. **Слабая:** падение этой площадки вместе с её дисками останавливает объектный слой, даже если в других ЦОДах есть машины. **Критично:** клиентам только вход на proxy; порты **6200–6202** и **873** не публиковать наружу; диск object-server — локальный **XFS**, не NFS; не растягивать это кольцо на второй дата-центр; не склеивать с GeoData Swift **2.29.2**.
 
 ### Схема инстансов и потоков
 
+Имена внутри блоков — роли, не обязательные DNS-имена. Сплошная стрелка — рабочий поток показанной схемы одной площадки; пунктир — чтение локальной карты, отложенное обновление, опциональный путь или сбор наблюдаемости. Направление стрелки — кто открывает соединение. Рамки subgraph **без заливки**: цвет задаёт сам квадратик, подложка его не перекрашивает.
+
 ```mermaid
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#d9ead3", "primaryTextColor": "#000000", "primaryBorderColor": "#38761d", "lineColor": "#5b5b5b", "secondaryColor": "#cfe2f3", "tertiaryColor": "#fff2cc", "clusterBkg": "transparent", "clusterBorder": "#666666"}}}%%
 flowchart LR
-  CLIENT["Клиенты Swift/S3<br/>приложения, Camunda, backup jobs"]
-  LB["Балансировщик<br/>HAProxy / иной L7 LB"]
-  KEYSTONE["Identity<br/>Keystone"]
-  MEMCACHED["Кэш<br/>Memcached"]
-  MON["Мониторинг<br/>swift-recon / StatsD / exporter"]
+  CLI["CLI — клиенты Swift/S3<br/>приложения, Camunda, backup"]
 
-  subgraph SWIFT["OpenStack Swift"]
-    subgraph PROXY_TIER["Proxy tier"]
-      PX1["Proxy instance 1<br/>swift-proxy-server + s3api"]
-      PX2["Proxy instance 2<br/>swift-proxy-server + s3api"]
-    end
-
-    RINGS["Карты размещения<br/>account.ring.gz<br/>container.ring.gz<br/>object.ring.gz"]
-
-    subgraph STORAGE_TIER["Storage tier — несколько storage-нод"]
-      ACC["Account services<br/>account-server :6202<br/>replicator / reaper / auditor"]
-      CONT["Container services<br/>container-server :6201<br/>replicator / updater / auditor"]
-      OBJ["Object services<br/>object-server :6200<br/>replicator / updater / auditor"]
-      DISKS["Локальные диски<br/>XFS + xattr<br/>/srv/node/..."]
-      RSYNC["Служба репликации<br/>rsync :873"]
-    end
+  subgraph EXT["Отдельно развёрнутые системы площадки 1"]
+    LB["LB — балансировщик HTTPS"]
+    KS["KS — Keystone"]
+    MC[("CACHE — Memcached")]
+    RSYNC["RSYNC — rsync :873"]
+    MON["MON — мониторинг"]
   end
 
-  subgraph LEGEND["Легенда"]
-    LSWIFT["Компонент Swift"]
-    LEXT["Внешняя система"]
+  subgraph SITE["Площадка 1 — OpenStack Swift 2.37.3"]
+    PX1["PX-1 — proxy 1<br/>swift-proxy-server + s3api"]
+    PX2["PX-2 — proxy 2<br/>swift-proxy-server + s3api"]
+    RING["RING — кольца<br/>account / container / object"]
+    ACC["ACC — account-server :6202"]
+    CONT["CONT — container-server :6201"]
+    OBJ["OBJ — object-server :6200"]
   end
 
-  CLIENT -->|"HTTPS :443<br/>Swift REST или S3 API"| LB
-  LB -->|"HTTP(S) :8080"| PX1
-  LB -->|"HTTP(S) :8080"| PX2
-  PX1 <-->|"проверка токена / S3-подписи"| KEYSTONE
-  PX2 <-->|"проверка токена / S3-подписи"| KEYSTONE
-  PX1 <-->|"токены и служебный кэш :11211"| MEMCACHED
-  PX2 <-->|"токены и служебный кэш :11211"| MEMCACHED
-  PX1 -.->|"читает локальную копию"| RINGS
-  PX2 -.->|"читает локальную копию"| RINGS
-  PX1 -->|"account API :6202"| ACC
-  PX1 -->|"container API :6201"| CONT
-  PX1 -->|"поток тела объекта :6200"| OBJ
-  PX2 -->|"те же внутренние API"| ACC
+  subgraph DATA["Носители площадки 1"]
+    DISK[("DISK — локальные диски XFS")]
+  end
+
+  CLI -->|"1. HTTPS :443<br/>Swift REST или S3"| LB
+  LB -->|"2. HTTP(S) :8080"| PX1
+  LB -->|"2. HTTP(S) :8080"| PX2
+  PX1 -->|"3. токен / S3-подпись"| KS
+  PX2 -->|"3. токен / S3-подпись"| KS
+  PX1 -->|"4. кэш токенов :11211"| MC
+  PX2 -->|"4. кэш токенов :11211"| MC
+  PX1 -.->|"5. локальная копия кольца"| RING
+  PX2 -.->|"5. локальная копия кольца"| RING
+  PX1 -->|"6. account API :6202"| ACC
+  PX1 -->|"7. container API :6201"| CONT
+  PX1 -->|"8. тело объекта :6200"| OBJ
+  PX2 -->|"6–8 те же внутренние API"| ACC
   PX2 --> CONT
   PX2 --> OBJ
-  RINGS -.->|"размещение account DB"| ACC
-  RINGS -.->|"размещение container DB"| CONT
-  RINGS -.->|"размещение объектов"| OBJ
-  ACC -->|"SQLite account DB"| DISKS
-  CONT -->|"SQLite container DB"| DISKS
-  OBJ -->|"файлы + метаданные xattr"| DISKS
-  ACC <-->|"репликация account DB по HTTP :6202"| ACC
-  CONT <-->|"репликация container DB по HTTP :6201"| CONT
-  OBJ <-->|"передача реплик :873"| RSYNC
-  OBJ -.->|"отложенное обновление listing"| CONT
-  CONT -.->|"обновление счётчиков account"| ACC
-  MON -.->|"метрики и recon-данные"| ACC
-  MON -.->|"метрики и recon-данные"| CONT
-  MON -.->|"метрики и recon-данные"| OBJ
+  ACC -->|"9. SQLite account DB"| DISK
+  CONT -->|"9. SQLite container DB"| DISK
+  OBJ -->|"9. файлы + xattr"| DISK
+  OBJ -->|"10. реплики объектов"| RSYNC
+  RSYNC -->|"10. rsync :873"| OBJ
+  OBJ -.->|"11. updater: listing"| CONT
+  CONT -.->|"11. updater: счётчики"| ACC
+  MON -.->|"12. recon / StatsD"| PX1
+  MON -.->|"12. recon / StatsD"| OBJ
 
-  classDef swift fill:#dbeafe,stroke:#2563eb,color:#172554;
-  classDef external fill:#fef3c7,stroke:#d97706,color:#451a03;
-  class PX1,PX2,RINGS,ACC,CONT,OBJ,DISKS,LSWIFT swift;
-  class CLIENT,LB,KEYSTONE,MEMCACHED,RSYNC,MON,LEXT external;
+  L_SWIFT["Swift: обязательный компонент"]
+  L_OPT["Swift: опциональный компонент"]
+  L_EXT["Внешняя система / отдельное ПО"]
+  L_DATA[("Кэш / диск другого ПО")]
+
+  style EXT fill:none,stroke:#0b5394,color:#000000
+  style SITE fill:none,stroke:#38761d,color:#000000
+  style DATA fill:none,stroke:#741b47,color:#000000
+
+  style PX1 fill:#d9ead3,stroke:#38761d,color:#000000,stroke-width:2px
+  style RING fill:#d9ead3,stroke:#38761d,color:#000000,stroke-width:2px
+  style ACC fill:#d9ead3,stroke:#38761d,color:#000000,stroke-width:2px
+  style CONT fill:#d9ead3,stroke:#38761d,color:#000000,stroke-width:2px
+  style OBJ fill:#d9ead3,stroke:#38761d,color:#000000,stroke-width:2px
+  style L_SWIFT fill:#d9ead3,stroke:#38761d,color:#000000,stroke-width:2px
+
+  style PX2 fill:#fff2cc,stroke:#bf9000,color:#000000,stroke-width:2px,stroke-dasharray:5 3
+  style L_OPT fill:#fff2cc,stroke:#bf9000,color:#000000,stroke-width:2px,stroke-dasharray:5 3
+
+  style CLI fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style LB fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style KS fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style RSYNC fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style MON fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+  style L_EXT fill:#cfe2f3,stroke:#0b5394,color:#000000,stroke-width:2px
+
+  style MC fill:#ead1dc,stroke:#741b47,color:#000000,stroke-width:2px
+  style DISK fill:#ead1dc,stroke:#741b47,color:#000000,stroke-width:2px
+  style L_DATA fill:#ead1dc,stroke:#741b47,color:#000000,stroke-width:2px
 ```
 
-Жёлтые блоки — системы вне Swift. Синие — компоненты или инфраструктурные части контура Swift. Сплошная стрелка показывает сетевой запрос или перенос данных, пунктир — чтение карты, отложенное обновление либо сбор наблюдаемости. Петли account и container services означают обмен между несколькими экземплярами одного типа, а не вызов процессом самого себя.
+**Легенда:**
 
-### Как читать схему
-
-#### Запись объекта
-
-1. Клиент отправляет `PUT` по Swift REST API или S3 API на HTTPS-адрес балансировщика. Балансировщик выбирает один из независимых proxy-инстансов и передаёт запрос на порт **8080**.
-2. Proxy обрабатывает API и middleware. Для S3 запрос сначала разбирает `s3api`; проверка S3-подписи в боевой схеме связана с внешним Keystone через `s3token`. **Keystone не входит в Swift:** это отдельная identity-система. Memcached также внешний и хранит токены и служебный кэш, но не тела объектов.
-3. Proxy хеширует путь account/container/object и по трём разным кольцам определяет backend-устройства. Account ring относится только к account service, container ring — к container service, object ring или ring политики хранения — к object service.
-4. Тело объекта proxy потоково отправляет object services на **6200/TCP**. Object service пишет байты в файл на локальном диске и сохраняет служебные метаданные в `xattr`.
-5. Container service на **6201/TCP** обновляет SQLite-базу со списком объектов контейнера. Account service на **6202/TCP** обновляет SQLite-базу со списком контейнеров аккаунта. Это метаданные пространства имён, а не дополнительные копии тела объекта.
-6. Если синхронное обновление listing не прошло, updater повторит его фоном. Replicator сравнивает и догоняет копии; для object service передача обычно идёт через rsync на **873/TCP**.
-
-#### Чтение объекта
-
-1. `GET` проходит тот же путь через балансировщик, proxy, аутентификацию и object ring.
-2. Proxy выбирает доступную копию, получает тело от object service по **6200/TCP** и потоково возвращает клиенту. Account и container services не передают тело файла; они нужны для операций со списками и их метаданными.
-3. Для запроса списка контейнеров proxy обращается к account service. Для списка объектов в контейнере — к container service. Поэтому успешный `GET` объекта и временно отстающий listing не противоречат друг другу.
-
-#### Фоновые потоки
-
-- **Replicator** обеспечивает сходимость реплик account-, container- и object-данных; он не принимает клиентский API.
-- **Updater** доставляет отложенные обновления счётчиков и listing между уровнями object → container → account.
-- **Auditor** проверяет целостность данных и помещает повреждённые элементы в карантин.
-- **Reaper** удаляет данные аккаунта после подтверждённого удаления аккаунта; это фоновый процесс account service.
-- Система мониторинга читает recon-данные и метрики. Она наблюдает Swift, но не участвует в пути `PUT`/`GET`.
+- <span style="color:#38761d">■</span> **Зелёный** — процессы и файлы Swift, без которых показанный контур PUT/GET не работает (`PX-1`, кольца, account / container / object services).
+- <span style="color:#bf9000">■</span> **Жёлтый, пунктирная рамка** — тот же продукт, который на одной площадке можно не включать (второй proxy). На закрытом стенде достаточно `PX-1`.
+- <span style="color:#0b5394">■</span> **Синий** — отдельно развёрнутые системы и участники. Swift их не кластеризует и не заменяет.
+- <span style="color:#741b47">■</span> **Розовый цилиндр** — кэш или диск другого ПО. Формат SQLite и xattr — продукт; Memcached и XFS — нет.
 
 ### Описание блоков
 
-#### Клиенты Swift/S3
+#### CLI — клиенты Swift/S3
 
-- **Что это:** приложения платформы, Camunda-задачи, сервисы резервного копирования или администраторские клиенты.
-- **Технологии и варианты:** Swift REST-клиент; AWS SDK, boto3 или другой S3-клиент при включённом `s3api`; multipart-загрузка через SLO для больших объектов.
-- **Назначение:** создавать, читать, перечислять и удалять объекты и контейнеры в пределах поддержанной матрицы API.
-- **Принадлежность:** отдельные внешние системы, не часть Swift.
+- **Что это:** приложения платформы, задачи Camunda, задания резервного копирования или администраторский клиент, которые кладут и забирают файлы по ключу.
+- **Технологии и варианты:** нативный Swift REST-клиент; AWS SDK, boto3 или иной S3-клиент при включённом middleware `s3api`; для объекта больше 5 ГБ — сегменты и манифест SLO / S3 multipart. ([матрица S3](https://docs.openstack.org/swift/2026.1/s3_compat.html), [большие объекты](https://docs.openstack.org/swift/2026.1/overview_large_objects.html))
+- **Назначение:** создавать, читать, перечислять и удалять объекты и контейнеры в пределах поддержанной матрицы API. Клиент не ходит на порты 6200–6202 и не читает диски storage-нод.
+- **Развёртывание:** внешние участники, не входят в Swift.
 
-#### Балансировщик
+#### LB — балансировщик HTTPS
 
-- **Что это:** единая клиентская точка входа перед несколькими proxy-инстансами.
-- **Технологии и варианты:** HAProxy либо иной L4/L7-балансировщик; TLS может завершаться здесь или на proxy.
-- **Назначение:** принимать HTTPS на **443/TCP**, проверять доступность proxy и распределять запросы на **8080/TCP**.
-- **Принадлежность:** отдельная внешняя система, не часть Swift.
+- **Что это:** единая клиентская точка входа площадки 1 перед процессами proxy.
+- **Технологии и варианты:** HAProxy либо иной L4/L7-балансировщик; TLS может завершаться здесь или на proxy. Конкретный продукт задаёт платформа, не Swift. ([Deployment Guide](https://docs.openstack.org/swift/2026.1/deployment_guide.html))
+- **Назначение:** принять HTTPS на **443/TCP**, проверить, что proxy жив, и распределить запросы на **8080/TCP**. Сам объекты не хранит и кольца не читает.
+- **Развёртывание:** отдельно развёрнутая система. На закрытом SAIO-стенде вход может быть `127.0.0.1:8080` без балансировщика; для показанной многоproxy-схемы вход обязателен.
 
-#### Proxy instances
+#### KS — Keystone
 
-- **Что это:** процессы `swift-proxy-server`; каждый proxy stateless относительно тел объектов.
-- **Технологии и варианты:** WSGI-конвейер с middleware `s3api`, `slo`, `bulk`, а для Keystone — `authtoken`, `s3token`, `keystoneauth`; нативный Swift API и S3 API работают на тех же proxy.
-- **Назначение:** единственный клиентский API Swift, аутентификация и авторизация через middleware, выбор backend по кольцам, потоковая передача данных, сбор ответов от storage services.
-- **Принадлежность:** часть Swift. Proxy не является ни account-, ни container-, ни object-service и не хранит постоянную копию тела объекта.
+- **Что это:** служба идентификации пользователей, проектов, токенов и EC2-ключей для S3-подписи.
+- **Технологии и варианты:** OpenStack Keystone в бою; на изолированном стенде вместо этого блока в proxy включают middleware `tempauth` (учётки в конфиге, не внешний identity). Middleware `authtoken`, `s3token`, `keystoneauth` работают внутри proxy и не делают Keystone частью Swift. ([middleware](https://docs.openstack.org/swift/2026.1/middleware.html), [SAIO](https://docs.openstack.org/swift/2026.1/development_saio.html))
+- **Назначение:** подтвердить, кто клиент и что ему разрешено. Для S3 proxy проверяет подпись через `s3token` у Keystone.
+- **Развёртывание:** отдельно развёрнутая система на **этой же** площадке. В боевой схеме обязательна. Учебные пароли `tempauth` в бой не копировать.
 
-#### Identity / Keystone
+#### CACHE — Memcached
 
-- **Что это:** служба идентификации пользователей, проектов, токенов и EC2 credentials для S3.
-- **Технологии и варианты:** OpenStack Keystone в бою; `tempauth` возможен как встроенный упрощённый middleware изолированного стенда, но это не внешний Keystone.
-- **Назначение:** подтвердить identity и права; при S3 proxy использует `s3token` для проверки подписи через Keystone.
-- **Принадлежность:** Keystone — отдельная внешняя система. Middleware `keystoneauth`, `authtoken` и `s3token` исполняются в proxy Swift, но не превращают Keystone в компонент Swift.
+- **Что это:** кэш в оперативной памяти для токенов и служебных результатов proxy.
+- **Технологии и варианты:** Memcached на **11211/TCP**; обычно несколько доступных экземпляров. Тела объектов туда не кладут. ([Deployment Guide](https://docs.openstack.org/swift/2026.1/deployment_guide.html), [SAIO](https://docs.openstack.org/swift/2026.1/development_saio.html))
+- **Назначение:** не ходить в identity на каждый запрос. Без живого Memcached типичный proxy с auth «не пускает».
+- **Развёртывание:** отдельно развёрнутое ПО. Ставится рядом со Swift, но это не процесс `swift-*` и не источник истины объектов.
 
-#### Memcached
+#### RSYNC — rsync
 
-- **Что это:** распределённый кэш в памяти.
-- **Технологии и варианты:** Memcached по **11211/TCP**; обычно несколько доступных экземпляров.
-- **Назначение:** кэш токенов и служебных результатов, снижение повторных обращений к identity. Тела объектов в нём не хранятся.
-- **Принадлежность:** отдельная внешняя система.
+- **Что это:** системная программа и протокол копирования файлов между storage-нодами.
+- **Технологии и варианты:** демон rsync на **873/TCP**. Object-replicator передаёт им реплики объектов. Account- и container-replicators этим потоком **не** пользуются: они гоняют записи SQLite по HTTP своих сервисов (**6202** и **6201**). ([Архитектура, Replication](https://docs.openstack.org/swift/2026.1/overview_architecture.html))
+- **Назначение:** фоном догнать требуемое размещение после отказа диска, handoff-записи или смены кольца.
+- **Развёртывание:** отдельное системное ПО на storage-нодах этой площадки. Процесс `object-replicator` входит в Swift; сам rsync — нет. Порт 873 клиентам не выдавать.
 
-#### Карты размещения — rings
+#### MON — мониторинг
 
-- **Что это:** отдельные файлы `account.ring.gz`, `container.ring.gz` и `object.ring.gz` либо object ring для каждой политики хранения.
-- **Технологии и варианты:** согласованное хеширование, партиции, replica-политика или erasure coding; рабочие `.ring.gz` строятся из административных `.builder`.
-- **Назначение:** детерминированно сопоставить account, container или object с конкретными устройствами и тем самым исключить центральный каталог размещения.
-- **Принадлежность:** часть Swift. Одинаковые версии нужных колец должны быть доступны proxy и соответствующим storage services.
+- **Что это:** средства наблюдения за кластером, не участник PUT/GET.
+- **Технологии и варианты:** `swift-recon` и recon-middleware на storage-нодах; встроенная отправка StatsD (`log_statsd_host`); внешний сборщик (collectd, Prometheus exporter, система метрик площадки). ([мониторинг](https://docs.openstack.org/swift/2026.1/admin/objectstorage-monitoring.html))
+- **Назначение:** видеть MD5 колец, время репликации, карантин, отложенные обновления listing (`async_pendings`) и ответы proxy.
+- **Развёртывание:** интерфейс recon относится к Swift; хранилище и графики метрик — отдельно развёрнутая система. На схеме **опционален** для рабочего PUT/GET.
 
-#### Account services
+#### PX-1 — proxy 1
 
-- **Что это:** `account-server` на **6202/TCP** и связанные фоновые процессы `account-replicator`, `account-auditor`, `account-reaper`.
-- **Технологии и варианты:** SQLite-базы account на локальных дисках; репликация баз между storage-нодами.
-- **Назначение:** хранить список контейнеров аккаунта, их счётчики и метаданные аккаунта. Account service не хранит список объектов и не передаёт тело объекта.
-- **Принадлежность:** часть Swift, отдельный тип storage service.
+- **Что это:** процесс `swift-proxy-server`: единственный клиентский API кластера. Не складывает тело объекта целиком на свой диск — стримит байты между клиентом и object-server. ([Proxy Server](https://docs.openstack.org/swift/2026.1/overview_architecture.html))
+- **Технологии и варианты:** Python / WSGI-конвейер. Для этой схемы в pipeline: `s3api` (S3), `slo` (большие объекты / multipart), при боевом identity — `authtoken`, `s3token`, `keystoneauth`. Нативный Swift REST и S3 слушают **те же** proxy на **8080/TCP**. ([middleware](https://docs.openstack.org/swift/2026.1/middleware.html))
+- **Назначение:** принять запрос, проверить identity, по кольцам выбрать backend, потоково записать или отдать объект, собрать ответы storage services. Если основной диск из кольца недоступен, proxy спрашивает handoff-устройство.
+- **Развёртывание:** входит в Swift, ставится на этой площадке. Минимум живого API — один такой процесс. Stateless относительно тел объектов: инстанс можно заменить без переноса файлов.
 
-#### Container services
+#### PX-2 — proxy 2
 
-- **Что это:** `container-server` на **6201/TCP** и процессы `container-replicator`, `container-updater`, `container-auditor`; для крупных контейнеров применяется sharding.
-- **Технологии и варианты:** SQLite-базы container, container ring, фоновые broker-операции и шарды.
-- **Назначение:** хранить listing объектов конкретного контейнера, счётчики и метаданные контейнера. Container service не хранит байты объектов и не заменяет account service.
-- **Принадлежность:** часть Swift, отдельный тип storage service.
+- **Что это:** второй такой же процесс `swift-proxy-server` за тем же входом.
+- **Технологии и варианты:** та же поставка **2.37.3**, тот же набор middleware и те же файлы колец, что у `PX-1`. Своего протокола «proxy ↔ proxy» нет. ([Deployment Guide](https://docs.openstack.org/swift/2026.1/deployment_guide.html))
+- **Назначение:** горизонтально раздать API и пережить отказ одного proxy. Это не выборы лидера и не кворум метаданных.
+- **Развёртывание:** входит в продукт; на одной площадке **опционален**. Учебный SAIO обходится `PX-1`. В бою второй proxy имеет смысл, только если `LB`, кольца и storage-ноды ему доступны. Один proxy = точка отказа входа.
 
-#### Object services
+#### RING — кольца
 
-- **Что это:** `object-server` на **6200/TCP** и процессы `object-replicator`, `object-updater`, `object-auditor`; для erasure coding вместо replicator используется `object-reconstructor`.
-- **Технологии и варианты:** файлы на локальной файловой системе, метаданные в `xattr`, replica storage policy или erasure coding, SLO-манифесты для составных больших объектов.
-- **Назначение:** хранить тело объекта и его файловые метаданные, отдавать доступную копию proxy, восстанавливать размещение и передавать отложенные обновления в container service.
-- **Принадлежность:** часть Swift, отдельный тип storage service. Только этот уровень хранит байты пользовательского объекта.
+- **Что это:** локальные карты «имя → на каких устройствах лежат копии»: отдельные файлы `account.ring.gz`, `container.ring.gz` и `object.ring.gz` (плюс object ring на каждую storage policy).
+- **Технологии и варианты:** согласованное хеширование, партиции, зоны; replica-политика (рекомендация вендора — **3 копии**, «единственное значение, которое тестировали») или erasure coding. Рабочие `.ring.gz` собирают из административных `.builder`. ([The Ring](https://docs.openstack.org/swift/2026.1/overview_architecture.html), [Deployment Guide](https://docs.openstack.org/swift/2026.1/deployment_guide.html))
+- **Назначение:** детерминированно указать proxy и фоновым процессам, куда писать и откуда читать, без центрального каталога размещения. Потеряли `.builder` — следующее изменение топологии лотерея: файлы на дисках могут остаться, карту пересобрать будет не из чего.
+- **Развёртывание:** часть Swift. Одинаковые версии нужных колец должны лежать у каждого proxy и у соответствующих storage services. Центрального «ring-сервера» на схеме нет: это файлы, которые копируют на ноды.
 
-#### Локальные диски
+#### ACC — account-server
 
-- **Что это:** устройства storage-нод, представленные точками монтирования `/srv/node/...`.
-- **Технологии и варианты:** XFS с extended attributes; несколько устройств и storage policies.
-- **Назначение:** постоянное хранение object-файлов, SQLite-баз account/container и служебных данных.
-- **Принадлежность:** инфраструктурный ресурс кластера Swift, не самостоятельный сетевой сервис.
+- **Что это:** storage service списков контейнеров аккаунта. Процесс `account-server` на **6202/TCP** плюс фон: `account-replicator`, `account-auditor`, `account-reaper`. Это не Keystone и не «учётка пользователя». ([Account Server](https://docs.openstack.org/swift/2026.1/overview_architecture.html))
+- **Технологии и варианты:** SQLite-базы account на локальных дисках; репликация баз между нодами по HTTP **6202** (или целиком файлом БД), не через поток rsync объектов.
+- **Назначение:** хранить список контейнеров, счётчики и метаданные account. Тело объекта и список объектов контейнера **не** хранит.
+- **Развёртывание:** входит в Swift. На схеме один квадрат — роль; в кластере несколько экземпляров на разных storage-нодах по account ring. Клиенту этот порт не нужен.
 
-#### Служба репликации / rsync
+#### CONT — container-server
 
-- **Что это:** транспорт, через который object-replicator передаёт данные между storage-нодами.
-- **Технологии и варианты:** демон rsync на **873/TCP** для object-реплик. Account и container replicators не используют этот поток: они обмениваются SQLite-базами по HTTP через внутренние replication endpoints своих сервисов на **6202/TCP** и **6201/TCP** соответственно.
-- **Назначение:** фоновое восстановление требуемого размещения после отказов, handoff-записей или изменения кольца.
-- **Принадлежность:** rsync — отдельное системное ПО, используемое внутренними процессами Swift; replicator — часть Swift.
+- **Что это:** storage service listing объектов в контейнере. Процесс `container-server` на **6201/TCP** плюс `container-replicator`, `container-updater`, `container-auditor`. Для очень больших контейнеров — sharding. ([Container Server](https://docs.openstack.org/swift/2026.1/overview_architecture.html))
+- **Технологии и варианты:** SQLite-базы container, container ring, фоновые broker-операции. Байты объектов сюда не пишут.
+- **Назначение:** знать, *какие имена* лежат в контейнере, и вести счётчики. Где лежат файлы, знает object ring, не этот сервис.
+- **Развёртывание:** входит в Swift, отдельный тип service. Несколько экземпляров на storage-нодах. Listing может отстать от успешного PUT — это ожидаемое окно eventual consistency, пока updater не догонит.
 
-#### Мониторинг
+#### OBJ — object-server
 
-- **Что это:** средства получения состояния и метрик кластера.
-- **Технологии и варианты:** `swift-recon`, StatsD, Prometheus exporter и внешняя система мониторинга.
-- **Назначение:** видеть заполнение дисков, длительность репликации, карантин, отложенные обновления и ответы proxy.
-- **Принадлежность:** `swift-recon` и публикация StatsD-метрик относятся к Swift; хранилище и визуализация метрик — отдельные системы.
+- **Что это:** blob-сервер тел объектов. Процесс `object-server` на **6200/TCP** плюс `object-replicator`, `object-updater`, `object-auditor`; для erasure coding вместо replicator — `object-reconstructor`. ([Object Server](https://docs.openstack.org/swift/2026.1/overview_architecture.html))
+- **Технологии и варианты:** файл на локальной ФС, метаданные в extended attributes (`xattr`); replica storage policy или erasure coding; SLO-манифест для составного большого объекта. В примере кольца все диски ноды на одном **6200**; вариант `servers_per_port` — свой порт на диск. ([Deployment Guide](https://docs.openstack.org/swift/2026.1/deployment_guide.html))
+- **Назначение:** записать и отдать байты объекта, держать файловые метаданные, восстановить размещение, поставить в очередь обновление listing, если container-server не ответил сразу.
+- **Развёртывание:** входит в Swift. Только этот уровень хранит байты пользовательского объекта. Несколько экземпляров на разных дисках/нодах по object ring (для replica=3 — три места). NFS как единственный диск object-server не ставить.
 
-### Состав Swift и внешние зависимости
+#### DISK — локальные диски XFS
 
-**В Swift входят:** proxy service и его middleware; account, container и object services; их replicator/updater/auditor/reaper/reconstructor; кольца и инструменты управления ими; recon-интерфейс.
+- **Что это:** устройства storage-нод, смонтированные как `/srv/node/...`, на которых лежат файлы объектов и SQLite account/container.
+- **Технологии и варианты:** **XFS** с включёнными xattr. RAID 5/6 вендор не требует и не рекомендует: надёжность — replica + auditor. Несколько устройств и несколько storage policy. Цифр «N дисков / M ТБ» в мануале нет. ([Deployment Guide](https://docs.openstack.org/swift/2026.1/deployment_guide.html), [SAIO](https://docs.openstack.org/swift/2026.1/development_saio.html))
+- **Назначение:** постоянное хранение. Пустой или сетевой диск без xattr ломает object-server.
+- **Развёртывание:** инфраструктурный ресурс этой площадки, не процесс Swift. Формат раскладки файлов — продукт; сама файловая система и железо — нет. Диски «чужого» ЦОДа в это кольцо не входят.
 
-**Не входят в Swift:** клиентские приложения, HAProxy или другой балансировщик, Keystone, Memcached, rsync как системная программа, PKI, Barbican/KMIP и внешняя система мониторинга. Они могут быть обязательными или рекомендуемыми для выбранной архитектуры, но остаются отдельными продуктами.
+#### Рамки EXT / SITE / DATA и блоки легенды
+
+- **Что это:** группировка и пояснение цветов, не runtime-процессы.
+- **Технологии и варианты:** служебные блоки Mermaid; заливки у рамок нет, чтобы не перекрашивать квадратики.
+- **Назначение:** `SITE` — поставка Swift на площадке 1; `EXT` — чужое ПО той же площадки; `DATA` — носители; легенда повторяет цвета узлов.
+- **Развёртывание:** на схему не ставятся.
+
+### Как читать схему
+
+1. **Это одна площадка.** Рамки `Отдельно развёрнутые системы`, `OpenStack Swift` и `Носители` — один дата-центр и один region. Второго и третьего ЦОДа нет: их появление потребовало бы независимого кластера (container sync или холодный бэкап), а не общего кольца через город. Порога RTT у проекта нет. ([Global Clusters](https://docs.openstack.org/swift/2026.1/overview_global_cluster.html))
+2. **Сначала смотрите на цвет квадратика, не на рамку.** Зелёный — ядро продукта. Жёлтый пунктир — тот же продукт, но его можно не включать. Синий — чужой жизненный цикл (клиент, балансировщик, Keystone, rsync, мониторинг). Розовый цилиндр — Memcached или диск. Рамки специально без заливки, иначе подложка перекрашивает узлы.
+3. **Читайте основной путь записи по номерам 1–2–3–4–5–8–9.** Человек или сервис открывает HTTPS на вход; вход выбирает живой proxy; proxy проверяет identity, смотрит кольцо и сам стримит тело на object-server; object-server пишет файл на локальный XFS. Балансировщик файл не хранит.
+4. **Шаг 1.** `CLI` знает одно публичное имя на **443**, не IP storage-ноды. Выдать клиенту **6200–6202** или **873** = обойти auth proxy. На SAIO публичного 443 нет: только `127.0.0.1:8080`. ([SAIO](https://docs.openstack.org/swift/2026.1/development_saio.html))
+5. **Шаг 2.** Внутри proxy слушает **8080/TCP** — и Swift REST, и S3, если включили `s3api`. Две стрелки `LB → PX-1` и `LB → PX-2` — балансировка запросов, не репликация объектов между proxy. Между proxy своей стрелки нет: каждый stateless и читает те же кольца. ([Proxy Server](https://docs.openstack.org/swift/2026.1/overview_architecture.html))
+6. **Жёлтый `PX-2` можно снять.** На закрытом стенде достаточно `PX-1`. Второй proxy нужен, чтобы отказ процесса не глушил API, пока живы `LB`, кольца и storage-ноды. Один proxy в бою — точка отказа входа.
+7. **Шаг 3 — identity, не хранилище.** В бою proxy ходит в Keystone (`s3token` / `authtoken`). На схеме это синий `KS`. На учебном SAIO синего блока нет: работает `tempauth` внутри proxy. Учётки стенда в бой не переносить. ([middleware](https://docs.openstack.org/swift/2026.1/middleware.html))
+8. **Шаг 4.** Memcached держит токены и служебный кэш, **не** PDF и не снимки. Розовый цилиндр подчёркивает: это чужое ПО. Упал Memcached — типичный auth-контур перестаёт пускать, диски при этом могут быть живы.
+9. **Шаг 5 пунктирный, потому что это чтение файла, не RPC.** Кольцо — локальная копия `.ring.gz` на каждой ноде. Три кольца независимы: account ring ведёт только к `ACC`, container — к `CONT`, object (или ring политики) — к `OBJ`. Нет стрелки «кольцо управляет диском по сети».
+10. **Шаги 6 и 7 — списки, не тело файла.** После PUT proxy обновляет SQLite container (список объектов) и при необходимости account (список контейнеров). Это метаданные пространства имён. Успешный `GET` объекта и пустой listing контейнера друг другу не противоречат: listing eventual. ([Updaters](https://docs.openstack.org/swift/2026.1/overview_architecture.html))
+11. **Шаг 8 обязателен для тела.** Proxy потоково пишет на object-server **6200/TCP**. Для replica=3 вендор тестировал три копии; успех клиенту на практике завязан на большинство бэкендов (для трёх копий это две), но отдельной главой эту цифру Deployment Guide не печает — печает «ставьте 3 replica». Если primary-диск мёртв, proxy берёт handoff из кольца, потом replicator вернёт данные «домой».
+12. **Шаг 9 разделяет формат и носитель.** SQLite и файлы с xattr — раскладка Swift; долговечность даёт локальный XFS. Три копии ≈ тройной объём диска относительно «один экземпляр файла». `DELETE` уедет на все три: replica ≠ backup.
+13. **Шаг 10 — фон, не клиентский PUT.** Object-replicator сравнивает партиции и догоняет файлы через rsync **873/TCP**. Account- и container-replicators на этой стрелке отсутствуют: они обмениваются по HTTP **6202** / **6201** между своими экземплярами (на схеме один квадрат роли, несколько процессов на разных нодах). Replicator клиентский API не принимает. ([Replication](https://docs.openstack.org/swift/2026.1/overview_architecture.html))
+14. **Шаг 11 пунктирный.** Если container-server не принял обновление сразу, object-updater поставит его в очередь на диске и догонит позже. Container-updater так же догоняет счётчики account. Это окно, в котором объект уже читается, а имени ещё нет в списке.
+15. **Шаг 12 только наблюдает.** Мониторинг снимает recon/StatsD. Он не участвует в PUT/GET. Стрелки к `PX-1` и `OBJ` — представители: recon-данные есть и у account/container. Отказ графиков не останавливает хранилище.
+16. **Чтение (`GET`) идёт тем же входом 1–2–3–4–5–8.** Proxy выбирает доступную копию по object ring, стримит тело клиенту. `ACC` и `CONT` для GET файла не нужны; они нужны, когда клиент просит *список* контейнеров или объектов.
+17. **На схеме не нарисованы** Kafka, Camunda как BPMN, эталон карточек, Barbican/KMS и второй ЦОД. Swift их не заменяет. Интеграции с ведомствами — через своё API платформы. Шифрование at-rest — опция middleware proxy, отдельным квадратом не показано: это защита унесённого диска, не админа внутренней сети. ([шифрование](https://docs.openstack.org/swift/2026.1/overview_encryption.html))
+18. **Эту схему нельзя дорисовать «ещё двумя ЦОДами».** Общее кольцо через город — stretch/Global Cluster; `write_affinity` для микросервиса «записал и сразу GET» вредит. Второй зал — свой кластер плюс container sync или бэкап объектов и `.builder`, не второй писатель того же ring.
+
+### Специальные термины схемы
+
+- **Account** — верхний уровень пространства имён Swift (обычно соответствует проекту/tenant); содержит контейнеры, не является учёткой Keystone.
+- **Account / container / object service** — три разных внутренних сервера Swift; взаимозаменять их нельзя.
+- **Auditor** — фоновый процесс, который ищет битый файл (bit rot) и кладёт его в карантин; replicator подменит копию с живой реплики.
+- **Backend** — внутренний account-, container- или object-server, выбранный proxy по кольцу.
+- **Blast radius** — область систем, которые задевает один отказ или ошибочное кольцо; здесь это площадка 1.
+- **Bucket** — термин S3; middleware `s3api` отображает его на Swift container.
+- **Container** — логическая папка объектов внутри account.
+- **Container sync** — штатный мост **между независимыми кластерами**, не способ растянуть одно кольцо.
+- **EC2 credentials** — пара access key / secret key в Keystone для подписи S3-запроса.
+- **Erasure coding (EC)** — политика «нарезать на фрагменты + чётность» вместо полных копий; восстановлением занимается reconstructor, не replicator. На этой схеме replica=3, не EC.
+- **Eventual consistency / окно listing** — объект уже можно GET по имени, а список контейнера ещё без этой строки, пока updater не догнал.
+- **Global Cluster** — официальная глава про несколько region и affinity; для этой платформы **не** целевая схема.
+- **Handoff** — запасное устройство из кольца, куда proxy пишет, если основное недоступно.
+- **Listing** — ответ «перечисли контейнеры account» или «перечисли объекты container».
+- **Middleware / WSGI pipeline** — цепочка обработчиков внутри proxy (s3api, slo, auth…), через которую проходит HTTP-запрос.
+- **Object** — пользовательские байты по имени внутри container.
+- **Partition / партиция** — кусок хеш-пространства, который кольцо назначает устройствам; копии партиции разносят по zone.
+- **Proxy** — процесс клиентского API; смотрит кольцо и стримит данные, сам объект на диск не складывает.
+- **Reaper** — фон account-server: окончательно удаляет данные после удаления account.
+- **Replica=3** — три полные копии; единственное значение replica, которое проект называет протестированным.
+- **Replicator** — фон, который сравнивает размещение с кольцом и догоняет недостающее.
+- **Region / zone** — уровни отказа в кольце. На схеме один region = эта площадка; zone — залы/стойки внутри неё, не «ещё два города».
+- **Ring / `.ring.gz` / `.builder`** — рабочая карта размещения и её исходник. Карту кладут на ноды; builder бэкапят отдельно.
+- **rsync** — отдельная программа ОС для копирования файлов; object-replicator вызывает её по **873/TCP**.
+- **s3api / s3token** — middleware S3-API и проверки S3-подписи через Keystone.
+- **SAIO** — Swift All In One: все процессы на одной Linux-машине для учёбы, не боевой кластер.
+- **SLO / multipart** — большой объект как набор сегментов плюс манифест; один PUT по умолчанию ≤ 5 ГБ.
+- **SQLite** — файловая СУБД списков account и container; это не эталон карточек платформы.
+- **Stateless proxy** — у proxy нет постоянной копии пользовательских файлов; его можно перезапустить без миграции объектов.
+- **Storage node** — машина с локальными дисками, где крутятся account/container/object services.
+- **Storage policy** — класс хранения контейнера (3 копии или EC); задаётся при создании контейнера и **не** меняется.
+- **Stretch** — растяжка живого кольца на несколько дата-центров; на этой схеме запрещена.
+- **Tempauth** — упрощённый auth в конфиге proxy для стенда; не Keystone.
+- **Tombstone** — маркер удаления (файл `.ts`), который реплицируется, чтобы старая копия не «воскресла».
+- **Updater** — фон доставки отложенных обновлений listing и счётчиков.
+- **xattr** — расширенные атрибуты файла, где object-server хранит метаданные Swift; поэтому нужна ФС вроде XFS.
+- **XFS** — файловая система storage-нод в официальном SAIO и типичном боевом контуре.
+
+### Что входит в состав
+
+| Роль | Зачем | Встроенность и опциональность | Как масштабируется |
+|---|---|---|---|
+| **Proxy service** | Клиентский Swift REST и S3 API, маршрутизация по кольцам | Встроен; минимум один процесс | Несколько stateless proxy за внешним балансировщиком |
+| **Account service** | Список контейнеров account (SQLite) | Встроен, отдельный тип | Несколько нод по account ring, replica=3 |
+| **Container service** | Listing объектов container (SQLite) | Встроен, отдельный тип | Несколько нод по container ring; крупные контейнеры — sharding |
+| **Object service** | Тела объектов на диске | Встроен, отдельный тип | Диски в object ring + rebalance; не «увеличить PVC одного пода» |
+| **Кольца и `.builder`** | Карта размещения | Встроены, обязательны | Копии `.ring.gz` на все ноды; builder бэкапят отдельно |
+| **Replicator / updater / auditor / reaper** | Сходимость копий, listing, целостность, удаление account | Встроены | Работают на storage-нодах; клиентский API не принимают |
+| **Reconstructor** | Восстановление EC-фрагментов | Встроен; нужен **только** при erasure coding | На этой схеме replica=3, блок не рисуется |
+| **s3api / slo / auth middleware** | S3, большие объекты, identity | Встроены в proxy; набор задаёт pipeline | Масштабируются вместе с proxy |
+| **swift-recon** | Снять состояние кластера | Встроен интерфейс | Внешняя система метрик не входит в Swift |
+
+**Не входят в Swift:** клиентские приложения, HAProxy или другой балансировщик, Keystone, Memcached, rsync как системная программа, PKI, Barbican/KMIP, внешняя система мониторинга. Они могут быть обязательными для выбранной архитектуры, но остаются отдельными продуктами.
 
 ### Официальные порты (менять можно, это контракт сети)
 
@@ -252,14 +339,14 @@ flowchart LR
 
 | Порт | Назначение |
 |---|---|
-| **8080/TCP** | Proxy: клиентский Swift API и (если включили) S3 API |
+| **8080/TCP** | Proxy: клиентский Swift API и (если включили) S3 API. Снаружи обычно **443** на балансировщике |
 | **6200/TCP** | Object server (в примере «старого» кольца все диски ноды на одном порту; вариант `servers_per_port` — **свой порт на диск**) |
 | **6201/TCP** | Container server |
 | **6202/TCP** | Account server |
-| **873/TCP** | rsync (репликация объектов) |
+| **873/TCP** | rsync (репликация объектов). Не Swift, но контракт внутренней сети |
 | **11211/TCP** | Memcached (не Swift, но proxy без него в типичной схеме не аутентифицирует) |
 
-SAIO на одной машине поднимает **несколько** object/container/account на портах вроде 6210/6220/… — это лабораторная схема «много процессов на localhost», не боевые номера.
+SAIO на одной машине поднимает **несколько** object/container/account на портах вроде 6210/6220/… — это лабораторная схема «много процессов на localhost», не боевые номера. UDP для клиентского API Swift нет.
 
 ## Глоссарий
 
