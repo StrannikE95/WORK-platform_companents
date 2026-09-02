@@ -57,7 +57,7 @@ Vanilla Kubernetes 1.36.4, собранный kubeadm, состоит из **т�
 
 Официальный обзор: https://kubernetes.io/docs/concepts/overview/components/
 
-**Control plane** управляет состоянием кластера и принимает решения. Это не пул прикладных подов.
+**Control plane** - управляет состоянием кластера и принимает решения. Это не пул прикладных подов.
 
 | Компонент | Назначение | Принадлежность |
 |---|---|---|
@@ -75,7 +75,7 @@ Vanilla Kubernetes 1.36.4, собранный kubeadm, состоит из **т�
 | **containerd** | Загружает образы и создаёт контейнеры по запросу kubelet | Runtime ноды этой карточки; не ядро Kubernetes. Альтернатива — CRI-O. Docker Engine здесь не CRI |
 | **kube-proxy** | Реализует Service правилами на ноде | Компонент ноды; официально опционален, потому что часть CNI полностью его заменяет |
 
-**Add-ons** расширяют кластер сетью, DNS, хранилищем, входящим трафиком и метриками. Их не следует называть ни control plane, ни worker-компонентами: это отдельный программный слой, обычно сам работающий как поды.
+**Add-ons** - расширяют кластер сетью, DNS, хранилищем, входящим трафиком и метриками. Их не следует называть ни control plane, ни worker-компонентами: это отдельный программный слой, обычно сам работающий как поды.
 
 | Компонент | Назначение | Обязательность |
 |---|---|---|
@@ -524,10 +524,10 @@ TLS до kube-apiserver защищает данные в сети, но не ш�
 ## Источники
 
 - Релиз Kubernetes 1.36.4: https://github.com/kubernetes/kubernetes/releases/tag/v1.36.4
-- Компоненты Kubernetes: https://kubernetes.io/docs/concepts/overview/components/
+- !!! Компоненты Kubernetes: https://kubernetes.io/docs/concepts/overview/components/
 - Порты и протоколы: https://kubernetes.io/docs/reference/networking/ports-and-protocols/
-- HA-топологии kubeadm, stacked и external etcd: https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/ha-topology/
-- Сборка HA kubeadm и балансировщик API: https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/high-availability/
+- !!! HA-топологии kubeadm, stacked и external etcd: https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/ha-topology/
+- !!! Сборка HA kubeadm и балансировщик API: https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/high-availability/
 - Сетевая модель и CNI: https://kubernetes.io/docs/concepts/cluster-administration/networking/
 - CSI и постоянные тома: https://kubernetes.io/docs/concepts/storage/volumes/
 - DNS для Service и подов: https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/
